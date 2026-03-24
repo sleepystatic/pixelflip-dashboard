@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import config from './config';
@@ -184,8 +184,8 @@ function Dashboard({ session }) {
   const [currentView, setCurrentView] = useState('dashboard');
   const [showDropdown, setShowDropdown] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
+  const [targetTimestamp, setTargetTimestamp] = useState(null);
 
-  const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
 
   // Theme Toggle Effect
   useEffect(() => {
@@ -201,7 +201,7 @@ function Dashboard({ session }) {
       .catch(err => console.error(err));
   }, [session.access_token]);
 
-  // Poll Status
+  // Poll Status & Sync Clock
   useEffect(() => {
     const interval = setInterval(() => {
       fetch(`${API_URL}/status`, { headers: authHeaders })
@@ -209,24 +209,33 @@ function Dashboard({ session }) {
         .then(data => {
           if (data.error) return;
           setStatus(prev => ({ ...prev, ...data }));
+
+          // Lock onto the server's official timestamp!
+          if (data.running && data.next_check_timestamp) {
+            setTargetTimestamp(data.next_check_timestamp);
+          }
         });
     }, 2000);
     return () => clearInterval(interval);
   }, [session.access_token]);
 
-  // Frontend Looping Timer
+  // True Server-Synced Timer
   useEffect(() => {
-    let interval;
-    if (status.running) {
-      if (timerSeconds === 0) setTimerSeconds(settings.check_interval * 60);
-      interval = setInterval(() => {
-        setTimerSeconds(prev => prev > 0 ? prev - 1 : settings.check_interval * 60);
-      }, 1000);
-    } else {
+    if (!status.running || !targetTimestamp) {
       setTimerSeconds(0);
+      return;
     }
-    return () => clearInterval(interval);
-  }, [status.running, settings.check_interval]);
+
+    const updateTimer = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = Math.max(0, targetTimestamp - now);
+      setTimerSeconds(remaining);
+    };
+
+    updateTimer(); // Update instantly so there is no 1-second lag
+    const tick = setInterval(updateTimer, 1000);
+    return () => clearInterval(tick);
+  }, [status.running, targetTimestamp]);
 
   // Actions
   const startScraper = () => fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
@@ -263,8 +272,14 @@ function Dashboard({ session }) {
   };
 
   const formatTime = (totalSeconds) => {
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
+    // 1. Force the number to be a clean, positive integer
+    const validSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+
+    // 2. Calculate minutes and seconds
+    const m = Math.floor(validSeconds / 60);
+    const s = validSeconds % 60;
+
+    // 3. Format beautifully
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
@@ -303,12 +318,20 @@ function Dashboard({ session }) {
                 <span className="text-xl font-bold hidden md:block">{status.running ? 'ACTIVE' : 'STOPPED'}</span>
               </div>
 
-              <button onClick={() => setShowDropdown(!showDropdown)} className="text-3xl hover:rotate-90 transition-transform cursor-pointer">⚙️</button>
+              <button onClick={() => setShowDropdown(!showDropdown)} className="cursor-pointer text-gray-400 hover:text-white transition-colors p-2">
+                onClick={() => setShowDropdown(!showDropdown)}
+                className="cursor-pointer transition-colors p-2 hover:opacity-70"
+                style={{ color: isDark ? '#E2E8F0' : '#4A5568' }}
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+              </button>
 
               {showDropdown && (
                 <div className="absolute right-0 top-12 w-48 z-50 p-2 space-y-2" style={{ background: isDark ? '#2D3748' : 'white', border: '3px solid #2D3748', boxShadow: '4px 4px 0 rgba(0,0,0,0.5)', imageRendering: 'pixelated' }}>
                   <button onClick={() => { setCurrentView('account'); setShowDropdown(false); }} className={`w-full text-left p-2 font-bold hover:bg-gray-200 ${isDark ? 'hover:text-black' : ''}`}>ACCOUNT</button>
-                  <button onClick={() => { setIsDark(!isDark); setShowDropdown(false); }} className={`w-full text-left p-2 font-bold hover:bg-gray-200 ${isDark ? 'hover:text-black' : ''}`}>{isDark ? '☀️ LIGHT MODE' : '🌙 DARK MODE'}</button>
+                  <button onClick={() => { setIsDark(!isDark); setShowDropdown(false); }} className={`w-full text-left p-2 font-bold hover:bg-gray-200 ${isDark ? 'hover:text-black' : ''}`}>{isDark ? 'LIGHT MODE' : 'DARK MODE'}</button>
                   <button onClick={() => supabase.auth.signOut()} className="w-full text-left p-2 font-bold text-red-500 hover:bg-red-100">LOGOUT</button>
                 </div>
               )}
@@ -322,9 +345,13 @@ function Dashboard({ session }) {
               <PixelButton onClick={stopScraper} disabled={!status.running} color="#F56565">■ STOP</PixelButton>
             </PixelBox>
 
-            <PixelBox className="p-6 text-center" color="#667eea" isDark={isDark}>
-              <div className="text-sm font-bold mb-2" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>NEXT CHECK IN</div>
-              <div className="text-5xl font-bold" style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>{status.running ? formatTime(timerSeconds) : '--:--'}</div>
+            <PixelBox className="p-6 text-center flex flex-col justify-center" color="#667eea" isDark={isDark}>
+              <div className="text-sm font-bold mb-2" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
+                {status.running && timerSeconds === 0 ? 'SYSTEM STATUS' : 'NEXT CHECK IN'}
+              </div>
+              <div className={`font-bold ${status.running && timerSeconds === 0 ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
+                {!status.running ? '--:--' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds))}
+              </div>
             </PixelBox>
 
             <PixelBox className="p-6 text-center" color="#48BB78" isDark={isDark}>
