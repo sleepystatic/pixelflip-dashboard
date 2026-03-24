@@ -195,6 +195,7 @@ function Dashboard({ session }) {
 
   // Load Settings
   useEffect(() => {
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
     fetch(`${API_URL}/settings`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => setSettings(data))
@@ -203,6 +204,7 @@ function Dashboard({ session }) {
 
   // Poll Status & Sync Clock
   useEffect(() => {
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
     const interval = setInterval(() => {
       fetch(`${API_URL}/status`, { headers: authHeaders })
         .then(res => res.json())
@@ -210,7 +212,6 @@ function Dashboard({ session }) {
           if (data.error) return;
           setStatus(prev => ({ ...prev, ...data }));
 
-          // Lock onto the server's official timestamp!
           if (data.running && data.next_check_timestamp) {
             setTargetTimestamp(data.next_check_timestamp);
           }
@@ -219,38 +220,20 @@ function Dashboard({ session }) {
     return () => clearInterval(interval);
   }, [session.access_token]);
 
-  // True Server-Synced Timer
-  useEffect(() => {
-    if (!status.running || !targetTimestamp) {
-      setTimerSeconds(0);
-      return;
-    }
-
-    const updateTimer = () => {
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = Math.max(0, targetTimestamp - now);
-      setTimerSeconds(remaining);
-    };
-
-    updateTimer(); // Update instantly so there is no 1-second lag
-    const tick = setInterval(updateTimer, 1000);
-    return () => clearInterval(tick);
-  }, [status.running, targetTimestamp]);
-
   // Actions
   const startScraper = () => {
-    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/start`, { method: 'POST', headers });
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
   };
 
   const stopScraper = () => {
-    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/stop`, { method: 'POST', headers });
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/stop`, { method: 'POST', headers: authHeaders });
   };
 
   const saveSettings = () => {
-    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/settings`, { method: 'POST', headers, body: JSON.stringify(settings) })
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/settings`, { method: 'POST', headers: authHeaders, body: JSON.stringify(settings) })
       .then(() => alert("✅ Saved!"));
   };
 
