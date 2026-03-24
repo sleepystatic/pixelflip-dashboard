@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import config from './config';
@@ -211,10 +211,10 @@ function Dashboard({ session }) {
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [nextCheckTime, setNextCheckTime] = useState('--:--');
 
-  const authHeaders = {
+  const authHeaders = useMemo(() => ({
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${session.access_token}`
-  };
+  }), [session.access_token]);
 
   // 1. Fetch initial settings
   useEffect(() => {
@@ -231,7 +231,7 @@ function Dashboard({ session }) {
         console.error('Settings Error:', err);
         setIsLoadingSettings(false);
       });
-  }, [session.access_token]);
+  }, [authHeaders]);
 
   // 2. Poll status
   useEffect(() => {
@@ -253,7 +253,7 @@ function Dashboard({ session }) {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [session.access_token]);
+  }, [authHeaders]);
 
   // 3. Countdown Timer
   useEffect(() => {
@@ -291,12 +291,12 @@ function Dashboard({ session }) {
   const startScraper = useCallback(() => {
     fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders })
       .catch(err => console.error('Failed to start:', err));
-  }, [session.access_token]);
+  }, [authHeaders]);
 
   const stopScraper = useCallback(() => {
     fetch(`${API_URL}/stop`, { method: 'POST', headers: authHeaders })
       .catch(err => console.error('Failed to stop:', err));
-  }, [session.access_token]);
+  }, [authHeaders]);
 
   const saveSettings = async () => {
     try {
@@ -356,8 +356,6 @@ function Dashboard({ session }) {
       excluded_keywords: prev.excluded_keywords.filter((_, i) => i !== index)
     }));
   };
-
-  const statusColor = { stopped: '#718096', running: '#48BB78', error: '#F56565', paused: '#ECC94B' }[status.status] || '#718096';
 
   if (isLoadingSettings) {
     return (
