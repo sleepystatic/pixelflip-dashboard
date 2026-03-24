@@ -238,9 +238,21 @@ function Dashboard({ session }) {
   }, [status.running, targetTimestamp]);
 
   // Actions
-  const startScraper = () => fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
-  const stopScraper = () => fetch(`${API_URL}/stop`, { method: 'POST', headers: authHeaders });
-  const saveSettings = () => fetch(`${API_URL}/settings`, { method: 'POST', headers: authHeaders, body: JSON.stringify(settings) }).then(() => alert("✅ Saved!"));
+  const startScraper = () => {
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/start`, { method: 'POST', headers });
+  };
+
+  const stopScraper = () => {
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/stop`, { method: 'POST', headers });
+  };
+
+  const saveSettings = () => {
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/settings`, { method: 'POST', headers, body: JSON.stringify(settings) })
+      .then(() => alert("✅ Saved!"));
+  };
 
   const addSearchTerm = () => {
     const term = newSearch.term.trim().toLowerCase();
