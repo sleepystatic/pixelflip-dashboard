@@ -1,19 +1,43 @@
-// CRA only exposes env vars prefixed with REACT_APP_ at build time.
-// Set REACT_APP_API_URL on Vercel to e.g. https://pixelflip-backend.onrender.com (with or without /api).
-function normalizeApiUrl(raw) {
-    if (!raw || typeof raw !== 'string') return null;
-    const trimmed = raw.trim().replace(/\/+$/, '');
-    if (!trimmed) return null;
-    return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+/* eslint-disable */
+
+// This function ensures the URL always ends in /api and has no trailing slashes
+function normalizeApiUrl(raw, fallback) {
+    let url = raw || fallback;
+    if (!url) return '';
+
+    // Remove trailing slashes
+    url = url.trim().replace(/\/+$/, '');
+
+    // Ensure it ends with /api
+    if (!url.endsWith('/api')) {
+        // If it contains /api elsewhere (like /api/status), strip it back to /api
+        const apiIdx = url.indexOf('/api/');
+        if (apiIdx !== -1) {
+            url = url.slice(0, apiIdx + 4);
+        } else {
+            url = `${url}/api`;
+        }
+    }
+    return url;
 }
 
-const fromEnv = normalizeApiUrl(process.env.REACT_APP_API_URL);
+// 1. Check if we are local or live
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+// 2. Define Fallbacks
 const defaultProd = 'https://pixelflip-backend.onrender.com/api';
+const defaultDev = 'http://localhost:5000/api';
+
+// 3. Final Selection
+const FINAL_URL = isLocal
+    ? normalizeApiUrl(process.env.REACT_APP_API_URL_DEV, defaultDev)
+    : normalizeApiUrl(process.env.REACT_APP_API_URL, defaultProd);
+
+console.log(`🌐 API Bridge established at: ${FINAL_URL}`);
 
 const config = {
-    API_URL:
-        fromEnv ||
-        (process.env.NODE_ENV === 'production' ? defaultProd : 'http://localhost:5000/api'),
+    API_URL: FINAL_URL
 };
 
 export default config;
+export { FINAL_URL as API_URL };

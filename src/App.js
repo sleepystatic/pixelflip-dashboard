@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import config from './config';
+import { API_URL } from './config';
 
 // ==========================================
 // REUSABLE PIXEL UI COMPONENTS
@@ -64,8 +65,6 @@ const PixelCheckbox = React.memo(({ checked, onChange, isDark }) => (
     }}
   />
 ));
-
-const API_URL = config.API_URL || 'http://localhost:5000/api';
 
 // ==========================================
 // ACCOUNT PAGE COMPONENT
@@ -187,6 +186,7 @@ function Dashboard({ session }) {
   const [showDropdown, setShowDropdown] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [targetTimestamp, setTargetTimestamp] = useState(null);
+  const [scraperAction, setScraperAction] = useState(null); // 'starting' | 'stopping' | null
 
 
   // Theme Toggle Effect
@@ -222,15 +222,49 @@ function Dashboard({ session }) {
     return () => clearInterval(interval);
   }, [session.access_token]);
 
+  // Countdown Timer (driven by backend next_check_timestamp)
+  useEffect(() => {
+    if (!status.running) {
+      setTimerSeconds(0);
+      return;
+    }
+
+    if (!targetTimestamp) {
+      setTimerSeconds(0);
+      return;
+    }
+
+    const tick = () => {
+      const now = Math.floor(Date.now() / 1000);
+      const remaining = Math.max(0, Math.floor(Number(targetTimestamp) - now));
+      setTimerSeconds(remaining);
+    };
+
+    tick(); // update immediately
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [status.running, targetTimestamp]);
+
   // Actions
-  const startScraper = () => {
+  const startScraper = async () => {
     const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
+    setScraperAction('starting');
+    try {
+      await fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
+    } finally {
+      // Let the next status poll confirm running; keep a short UX lock to prevent spam.
+      setTimeout(() => setScraperAction(null), 1200);
+    }
   };
 
-  const stopScraper = () => {
+  const stopScraper = async () => {
     const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/stop`, { method: 'POST', headers: authHeaders });
+    setScraperAction('stopping');
+    try {
+      await fetch(`${API_URL}/stop`, { method: 'POST', headers: authHeaders });
+    } finally {
+      setTimeout(() => setScraperAction(null), 1200);
+    }
   };
 
   const saveSettings = () => {
@@ -341,8 +375,25 @@ function Dashboard({ session }) {
           {/* Controls & Stats */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <PixelBox className="p-6 flex flex-col justify-center gap-4" color="#5A67D8" isDark={isDark}>
-              <PixelButton onClick={startScraper} disabled={status.running} color="#48BB78">▶ START</PixelButton>
-              <PixelButton onClick={stopScraper} disabled={!status.running} color="#F56565">■ STOP</PixelButton>
+              <PixelButton
+                onClick={startScraper}
+                disabled={status.running || scraperAction === 'starting' || scraperAction === 'stopping'}
+                color="#48BB78"
+              >
+                {scraperAction === 'starting' ? '… STARTING' : '▶ START'}
+              </PixelButton>
+              <PixelButton
+                onClick={stopScraper}
+                disabled={!status.running || scraperAction === 'starting' || scraperAction === 'stopping'}
+                color="#F56565"
+              >
+                {scraperAction === 'stopping' ? '… STOPPING' : '■ STOP'}
+              </PixelButton>
+              {(scraperAction === 'starting' || scraperAction === 'stopping') && (
+                <div className="text-xs font-bold animate-pulse" style={{ color: isDark ? '#A0AEC0' : '#E2E8F0' }}>
+                  UPDATING SCRAPER STATE…
+                </div>
+              )}
             </PixelBox>
 
             <PixelBox className="p-6 text-center flex flex-col justify-center" color="#667eea" isDark={isDark}>
