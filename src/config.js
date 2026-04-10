@@ -26,7 +26,8 @@ const isLocal = window.location.hostname === 'localhost' || window.location.host
 
 // 2. Define Fallbacks
 const defaultProd = 'https://pixelflip-backend.onrender.com/api';
-const defaultDev = 'https://api.pixelflip.app/api';
+// Local dev should default to local Flask API.
+const defaultDev = 'http://localhost:5000/api';
 
 // 3. Final Selection
 const FINAL_URL = isLocal

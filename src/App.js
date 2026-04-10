@@ -40,19 +40,40 @@ const PixelButton = React.memo(({ children, onClick, disabled, color = "#667eea"
   </button>
 ));
 
-const PixelInput = React.memo(({ value, onChange, placeholder, type = "text", isDark }) => (
-  <input
-    type={type} value={value} onChange={onChange} placeholder={placeholder}
-    className="w-full p-3 text-base font-bold focus:outline-none"
-    style={{
-      background: isDark ? '#2D3748' : '#F7FAFC',
-      color: isDark ? '#F7FAFC' : '#2D3748',
-      border: 'none',
-      boxShadow: `0 0 0 3px ${isDark ? '#4A5568' : '#2D3748'}, inset 3px 3px 0 0 rgba(0,0,0,0.15)`,
-      imageRendering: 'pixelated'
-    }}
-  />
-));
+const PixelInput = React.memo(({ value, onChange, placeholder, type = "text", isDark, withToggle = false }) => {
+  const [show, setShow] = useState(false);
+  const finalType = withToggle ? (show ? 'text' : 'password') : type;
+  return (
+    <div className="relative">
+      <input
+        type={finalType}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        className={`w-full p-3 text-base font-bold focus:outline-none ${withToggle ? 'pr-12' : ''}`}
+        style={{
+          background: isDark ? '#2D3748' : '#F7FAFC',
+          color: isDark ? '#F7FAFC' : '#2D3748',
+          border: 'none',
+          boxShadow: `0 0 0 3px ${isDark ? '#4A5568' : '#2D3748'}, inset 3px 3px 0 0 rgba(0,0,0,0.15)`,
+          imageRendering: 'pixelated'
+        }}
+      />
+      {withToggle && (
+        <button
+          type="button"
+          onClick={() => setShow(v => !v)}
+          className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 font-bold"
+          style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          title={show ? 'Hide password' : 'Show password'}
+        >
+          {show ? '🙈' : '👁'}
+        </button>
+      )}
+    </div>
+  );
+});
 
 const PixelCheckbox = React.memo(({ checked, onChange, isDark }) => (
   <div
@@ -71,6 +92,8 @@ const PixelCheckbox = React.memo(({ checked, onChange, isDark }) => (
 const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, notify, confirmAction, refreshSession }) => {
   const [passwords, setPasswords] = useState({ old: '', new: '', confirm: '' });
   const [emailDraft, setEmailDraft] = useState(session?.user?.email || '');
+  const [emailCode, setEmailCode] = useState('');
+  const [emailStep, setEmailStep] = useState('request'); // request | verify
   const [emailBusy, setEmailBusy] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [billingBusy, setBillingBusy] = useState(null); // 'portal' | 'cancel'
@@ -135,7 +158,7 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
     }
     setEmailBusy(true);
     try {
-      const res = await fetch(`${API_URL}/update-email`, {
+      const res = await fetch(`${API_URL}/request-email-change`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -145,13 +168,43 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
       });
       const data = await res.json();
       if (data.success) {
-        notify('Email updated in Supabase. Refreshing session...', 'success');
-        if (refreshSession) await refreshSession();
+        setEmailStep('verify');
+        notify('Verification code sent. Enter it below to confirm email change.', 'success');
       } else {
         notify(data.error || 'Email update failed.', 'error');
       }
     } catch {
       notify('Server error while updating email.', 'error');
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  const verifyEmailCode = async () => {
+    const next = emailDraft.trim().toLowerCase();
+    const code = emailCode.trim();
+    if (!code) return notify('Enter the 6-digit verification code.', 'error');
+    setEmailBusy(true);
+    try {
+      const res = await fetch(`${API_URL}/update-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ new_email: next, code })
+      });
+      const data = await res.json();
+      if (data.success) {
+        notify('Email updated in Supabase. Please confirm from your inbox if prompted.', 'success');
+        setEmailCode('');
+        setEmailStep('request');
+        if (refreshSession) await refreshSession();
+      } else {
+        notify(data.error || 'Code verification failed.', 'error');
+      }
+    } catch {
+      notify('Server error while verifying code.', 'error');
     } finally {
       setEmailBusy(false);
     }
@@ -232,13 +285,33 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
             value={emailDraft}
             onChange={(e) => setEmailDraft(e.target.value)}
           />
-          <PixelButton
-            color="#667eea"
-            disabled={emailBusy}
-            onClick={handleEmailUpdate}
-          >
-            {emailBusy ? 'UPDATING…' : 'UPDATE EMAIL'}
-          </PixelButton>
+          {emailStep === 'verify' && (
+            <PixelInput
+              placeholder="6-DIGIT CODE"
+              type="text"
+              isDark={isDark}
+              value={emailCode}
+              onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            />
+          )}
+          <div className="flex gap-3 flex-wrap">
+            <PixelButton
+              color="#667eea"
+              disabled={emailBusy}
+              onClick={handleEmailUpdate}
+            >
+              {emailBusy ? 'SENDING…' : 'SEND VERIFICATION CODE'}
+            </PixelButton>
+            {emailStep === 'verify' && (
+              <PixelButton
+                color="#48BB78"
+                disabled={emailBusy}
+                onClick={verifyEmailCode}
+              >
+                {emailBusy ? 'VERIFYING…' : 'VERIFY & UPDATE EMAIL'}
+              </PixelButton>
+            )}
+          </div>
         </div>
       </PixelBox>
 
@@ -248,6 +321,7 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
           <PixelInput
             placeholder="CURRENT PASSWORD"
             type="password"
+            withToggle
             isDark={isDark}
             value={passwords.old}
             onChange={(e) => setPasswords({...passwords, old: e.target.value})}
@@ -255,6 +329,7 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
           <PixelInput
             placeholder="NEW PASSWORD"
             type="password"
+            withToggle
             isDark={isDark}
             value={passwords.new}
             onChange={(e) => setPasswords({...passwords, new: e.target.value})}
@@ -262,6 +337,7 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
           <PixelInput
             placeholder="CONFIRM NEW PASSWORD"
             type="password"
+            withToggle
             isDark={isDark}
             value={passwords.confirm}
             onChange={(e) => setPasswords({...passwords, confirm: e.target.value})}
@@ -583,7 +659,14 @@ function Dashboard({ session }) {
     const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
     const interval = setInterval(() => {
       fetch(`${API_URL}/status`, { headers: authHeaders })
-        .then(res => res.json())
+        .then(async (res) => {
+          if (res.status === 401) {
+            notify('Your session expired. Please log in again.', 'error');
+            await supabase.auth.signOut();
+            return { error: 'unauthorized' };
+          }
+          return res.json();
+        })
         .then(data => {
           if (data.error) return;
           setStatus(prev => ({ ...prev, ...data }));
@@ -720,9 +803,14 @@ const formatTime = (totalSeconds) => {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
+      if (res.status === 401) {
+        notify('Auth expired. Please log in again before checkout.', 'error');
+        await supabase.auth.signOut();
+        return;
+      }
       const data = await res.json();
       if (data.url) window.location.href = data.url;
-      else notify(data.error || 'Checkout could not start. Is STRIPE_PRICE_ID set on the server?', 'error');
+      else notify(data.error || 'Checkout could not start. Check Stripe env vars/server logs.', 'error');
     } catch {
       notify('Checkout request failed.', 'error');
     } finally {
