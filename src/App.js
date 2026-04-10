@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
-import config from './config';
 import { API_URL } from './config';
 
 // ==========================================
@@ -69,40 +68,377 @@ const PixelCheckbox = React.memo(({ checked, onChange, isDark }) => (
 // ==========================================
 // ACCOUNT PAGE COMPONENT
 // ==========================================
-const AccountPage = ({ onBack, isDark }) => (
-  <div className="max-w-2xl mx-auto">
-    <PixelBox className="p-6 mb-6 flex justify-between items-center" color="#5A67D8" isDark={isDark}>
-      <h1 className="text-3xl font-bold">ACCOUNT SETTINGS</h1>
-      <PixelButton onClick={onBack} color="#718096" small>RETURN TO DASHBOARD</PixelButton>
-    </PixelBox>
+const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, notify, confirmAction, refreshSession }) => {
+  const [passwords, setPasswords] = useState({ old: '', new: '', confirm: '' });
+  const [emailDraft, setEmailDraft] = useState(session?.user?.email || '');
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(null); // 'portal' | 'cancel'
 
-    <PixelBox className="p-6 mb-6" color="#48BB78" isDark={isDark}>
-      <h2 className="text-xl font-bold mb-4">SUBSCRIPTION PLAN</h2>
-      <div className="p-4 mb-4" style={{ background: isDark ? '#276749' : '#C6F6D5', border: '2px solid #2F855A' }}>
-        <p className="font-bold text-lg text-green-900 dark:text-green-100">PRO SNIPER</p>
-        <p className="text-sm text-green-800 dark:text-green-200">Active • Renews on April 24, 2026</p>
-      </div>
-      <div className="flex gap-4">
-        <PixelButton color="#48BB78" onClick={() => alert('Stripe Portal Coming Soon')}>MANAGE BILLING</PixelButton>
-        <PixelButton color="#F56565" onClick={() => alert('Cancel Flow Coming Soon')}>CANCEL PLAN</PixelButton>
-      </div>
-    </PixelBox>
+  const renewalLabel = (() => {
+    const ts = settings?.subscription_current_period_end;
+    if (!ts) return null;
+    try {
+      return new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' });
+    } catch {
+      return null;
+    }
+  })();
 
-    <PixelBox className="p-6" color="#ECC94B" isDark={isDark}>
-      <h2 className="text-xl font-bold mb-4">SECURITY</h2>
-      <div className="space-y-4">
-        <PixelInput placeholder="NEW PASSWORD" type="password" isDark={isDark} />
-        <PixelInput placeholder="CONFIRM NEW PASSWORD" type="password" isDark={isDark} />
-        <PixelButton color="#ECC94B" textColor="#2D3748" onClick={() => alert('Password Update Coming Soon')}>UPDATE PASSWORD</PixelButton>
-      </div>
-    </PixelBox>
-  </div>
-);
+  const openBillingPortal = async () => {
+    setBillingBusy('portal');
+    try {
+      const res = await fetch(`${API_URL}/create-portal-session`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+      else notify(data.message || data.error || 'Could not open billing portal.', 'error');
+    } catch {
+      notify('Billing portal request failed.', 'error');
+    } finally {
+      setBillingBusy(null);
+    }
+  };
+
+  const cancelAtPeriodEnd = async () => {
+    const confirmed = await confirmAction(
+      'Cancel your plan at the end of the current billing period? You keep access until then.'
+    );
+    if (!confirmed) return;
+    setBillingBusy('cancel');
+    try {
+      const res = await fetch(`${API_URL}/cancel-subscription`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        notify('Your subscription will end after the current period.', 'success');
+        if (onRefreshBilling) onRefreshBilling();
+      } else {
+        notify(data.error || 'Could not cancel subscription.', 'error');
+      }
+    } catch {
+      notify('Cancel request failed.', 'error');
+    } finally {
+      setBillingBusy(null);
+    }
+  };
+
+  const handleEmailUpdate = async () => {
+    const next = emailDraft.trim().toLowerCase();
+    if (!next) return notify('Please enter a valid email.', 'error');
+    if (next === (session?.user?.email || '').toLowerCase()) {
+      return notify('That is already your current email.', 'info');
+    }
+    setEmailBusy(true);
+    try {
+      const res = await fetch(`${API_URL}/update-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ new_email: next })
+      });
+      const data = await res.json();
+      if (data.success) {
+        notify('Email updated in Supabase. Refreshing session...', 'success');
+        if (refreshSession) await refreshSession();
+      } else {
+        notify(data.error || 'Email update failed.', 'error');
+      }
+    } catch {
+      notify('Server error while updating email.', 'error');
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  const handlePasswordUpdate = async () => {
+    if (!passwords.old || !passwords.new) return notify("Please fill in all fields.", 'error');
+    if (passwords.new !== passwords.confirm) return notify("New passwords do not match!", 'error');
+
+    setUpdating(true);
+    try {
+      const res = await fetch(`${API_URL}/update-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          old_password: passwords.old,
+          new_password: passwords.new
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        notify("Success! Password updated.", 'success');
+        setPasswords({ old: '', new: '', confirm: '' });
+      } else {
+        notify(`Error: ${data.error || 'Update failed'}`, 'error');
+      }
+    } catch (err) {
+      notify("Server error. Try again later.", 'error');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      <PixelBox className="p-6 mb-6 flex justify-between items-center" color="#5A67D8" isDark={isDark}>
+        <h1 className="text-3xl font-bold">ACCOUNT SETTINGS</h1>
+        <PixelButton onClick={onBack} color="#718096" small>RETURN TO DASHBOARD</PixelButton>
+      </PixelBox>
+
+      <PixelBox className="p-6 mb-6" color="#48BB78" isDark={isDark}>
+        <h2 className="text-xl font-bold mb-4">SUBSCRIPTION PLAN</h2>
+        <div className="p-4 mb-4" style={{
+            background: isDark ? '#276749' : '#C6F6D5',
+            border: '2px solid #2F855A'
+        }}>
+            <p className="font-bold text-lg" style={{ color: isDark ? '#F0FFF4' : '#1A202C' }}>
+                PRO SNIPER
+            </p>
+            <p className="text-sm" style={{ color: isDark ? '#C6F6D5' : '#2D3748', opacity: 0.9 }}>
+                {settings?.subscription_cancel_at_period_end
+                  ? `Ends after current period${renewalLabel ? ` (${renewalLabel})` : ''}.`
+                  : renewalLabel
+                    ? `Active • Renews on ${renewalLabel}`
+                    : 'Active • Billing date syncs from Stripe after checkout.'}
+            </p>
+        </div>
+        <div className="flex flex-wrap gap-4">
+          <PixelButton color="#48BB78" disabled={billingBusy} onClick={openBillingPortal}>
+            {billingBusy === 'portal' ? 'OPENING…' : 'MANAGE BILLING'}
+          </PixelButton>
+          <PixelButton color="#F56565" disabled={billingBusy || settings?.subscription_cancel_at_period_end} onClick={cancelAtPeriodEnd}>
+            {billingBusy === 'cancel' ? 'UPDATING…' : (settings?.subscription_cancel_at_period_end ? 'ALREADY CANCELLING' : 'CANCEL PLAN')}
+          </PixelButton>
+        </div>
+      </PixelBox>
+
+      <PixelBox className="p-6 mb-6" color="#667eea" isDark={isDark}>
+        <h2 className="text-xl font-bold mb-4">ACCOUNT EMAIL</h2>
+        <div className="space-y-4">
+          <PixelInput
+            placeholder="NEW EMAIL"
+            type="email"
+            isDark={isDark}
+            value={emailDraft}
+            onChange={(e) => setEmailDraft(e.target.value)}
+          />
+          <PixelButton
+            color="#667eea"
+            disabled={emailBusy}
+            onClick={handleEmailUpdate}
+          >
+            {emailBusy ? 'UPDATING…' : 'UPDATE EMAIL'}
+          </PixelButton>
+        </div>
+      </PixelBox>
+
+      <PixelBox className="p-6" color="#ECC94B" isDark={isDark}>
+        <h2 className="text-xl font-bold mb-4">SECURITY</h2>
+        <div className="space-y-4">
+          <PixelInput
+            placeholder="CURRENT PASSWORD"
+            type="password"
+            isDark={isDark}
+            value={passwords.old}
+            onChange={(e) => setPasswords({...passwords, old: e.target.value})}
+          />
+          <PixelInput
+            placeholder="NEW PASSWORD"
+            type="password"
+            isDark={isDark}
+            value={passwords.new}
+            onChange={(e) => setPasswords({...passwords, new: e.target.value})}
+          />
+          <PixelInput
+            placeholder="CONFIRM NEW PASSWORD"
+            type="password"
+            isDark={isDark}
+            value={passwords.confirm}
+            onChange={(e) => setPasswords({...passwords, confirm: e.target.value})}
+          />
+          <PixelButton
+            color="#ECC94B"
+            textColor="#2D3748"
+            disabled={updating}
+            onClick={handlePasswordUpdate}
+          >
+            {updating ? 'UPDATING...' : 'UPDATE PASSWORD'}
+          </PixelButton>
+        </div>
+      </PixelBox>
+    </div>
+  );
+};
 
 // ==========================================
 // PRICING GATE (UNPAID USERS)
 // ==========================================
-const PricingGate = ({ onLogout, isDark }) => (
+const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
+  const [listings, setListings] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const limit = 40;
+
+  const fetchChunk = async (offset, append) => {
+    const isMore = append === true;
+    if (!isMore) setLoading(true);
+    else setLoadingMore(true);
+    try {
+      const res = await fetch(`${API_URL}/listings?limit=${limit}&offset=${offset}`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.error) {
+        notify(data.error, 'error');
+        return;
+      }
+      const chunk = data.listings || [];
+      setTotal(data.total || 0);
+      setNextOffset(offset + chunk.length);
+      if (append) setListings(prev => [...prev, ...chunk]);
+      else setListings(chunk);
+    } catch {
+      notify('Could not load listings.', 'error');
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchChunk(0, false);
+  }, [session.access_token]);
+
+  const canLoadMore = nextOffset < total;
+
+  const markListing = async (row) => {
+    const reason = await confirmAction(
+      `How should this listing be labeled?`,
+      { dualAction: true }
+    );
+    if (!reason) return;
+    try {
+      const res = await fetch(`${API_URL}/listings/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ link: row.link, reason }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        notify(data.error || 'Could not update listing.', 'error');
+        return;
+      }
+      setListings(prev => prev.filter(item => item.link !== row.link));
+      setTotal(prev => Math.max(0, prev - 1));
+      notify(reason === 'sold' ? 'Listing marked sold.' : 'Listing marked not a deal.', 'success');
+    } catch {
+      notify('Request failed while updating listing.', 'error');
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <PixelBox className="p-6 mb-6 flex justify-between items-center flex-wrap gap-4" color="#5A67D8" isDark={isDark}>
+        <div>
+          <h1 className="text-3xl font-bold">YOUR SCRAPED LISTINGS</h1>
+          <p className="text-sm mt-1" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
+            {total} saved {total === 1 ? 'match' : 'matches'}
+          </p>
+        </div>
+        <PixelButton onClick={onBack} color="#718096" small>BACK TO DASHBOARD</PixelButton>
+      </PixelBox>
+
+      {loading ? (
+        <div className="text-center font-bold py-16" style={{ color: isDark ? '#A0AEC0' : '#4A5568' }}>LOADING…</div>
+      ) : listings.length === 0 ? (
+        <PixelBox className="p-8 text-center" color="#ECC94B" isDark={isDark}>
+          <p className="font-bold">No listings saved yet. Start the scanner to capture matches.</p>
+        </PixelBox>
+      ) : (
+        <div className="space-y-4">
+          {listings.map((row, i) => (
+            <PixelBox key={`${row.link}-${i}`} className="p-4" color="#4A5568" isDark={isDark}>
+              <div className="flex gap-4 flex-col sm:flex-row">
+                <div
+                  className="flex-shrink-0 mx-auto sm:mx-0 w-full sm:w-28 h-28 overflow-hidden border-4"
+                  style={{ borderColor: isDark ? '#4A5568' : '#2D3748', background: isDark ? '#2D3748' : '#E2E8F0' }}
+                >
+                  {row.image_url ? (
+                    <img
+                      src={row.image_url}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xs font-bold px-2 text-center" style={{ color: isDark ? '#718096' : '#4A5568' }}>NO IMAGE</div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="flex items-start justify-between gap-3">
+                  <a
+                    href={row.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-lg hover:underline break-words block"
+                    style={{ color: isDark ? '#7F9CF5' : '#4338CA' }}
+                  >
+                    {row.title}
+                  </a>
+                    <button
+                      onClick={() => markListing(row)}
+                      className="bg-red-500 text-white w-8 h-8 font-bold flex-shrink-0"
+                      title="Mark sold / not a deal"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <p className="font-bold mt-2 text-xl" style={{ color: isDark ? '#68D391' : '#38A169' }}>
+                    {typeof row.price === 'number' ? `$${row.price}` : row.price}
+                  </p>
+                  <p className="text-sm mt-1 font-bold" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
+                    {[row.platform, row.location].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+              </div>
+            </PixelBox>
+          ))}
+          {canLoadMore && (
+            <div className="text-center pt-2">
+              <PixelButton
+                color="#667eea"
+                disabled={loadingMore}
+                onClick={() => fetchChunk(nextOffset, true)}
+              >
+                {loadingMore ? 'LOADING…' : 'LOAD MORE'}
+              </PixelButton>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PricingGate = ({ onLogout, isDark, session, onStartCheckout, checkoutLoading }) => (
   <div className="min-h-screen p-4 md:p-8 flex items-center justify-center transition-colors duration-300" style={{ background: isDark ? 'linear-gradient(135deg, #2D3748 0%, #1A202C 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', fontFamily: 'monospace' }}>
     <PixelBox className="max-w-4xl w-full p-8 text-center" color="#5A67D8" isDark={isDark}>
       <h1 className="text-3xl md:text-5xl font-bold mb-4">PIXELFLIP PRO</h1>
@@ -133,8 +469,8 @@ const PricingGate = ({ onLogout, isDark }) => (
             <li>✓ 5 Minute Checks</li>
             <li>✓ Advanced AI Image Filtering</li>
           </ul>
-          <PixelButton onClick={() => alert("Stripe Checkout Coming Soon!")} color="#48BB78" className="w-full">
-            UPGRADE NOW
+          <PixelButton onClick={onStartCheckout} disabled={checkoutLoading} color="#48BB78" className="w-full">
+            {checkoutLoading ? 'REDIRECTING…' : 'UPGRADE NOW'}
           </PixelButton>
         </div>
       </div>
@@ -176,7 +512,7 @@ export default function App() {
 // DASHBOARD COMPONENT
 // ==========================================
 function Dashboard({ session }) {
-  const [status, setStatus] = useState({ running: false, status: 'stopped', items_scanned_today: 0, matches_found_today: 0, recent_activity: [] });
+  const [status, setStatus] = useState({ running: false, status: 'stopped', listings_count: 0, items_scanned_today: 0, matches_found_today: 0, recent_activity: [] });
   const [settings, setSettings] = useState({ platforms: { craigslist: true, offerup: true, mercari: true }, zip_code: '95212', distance: 25, check_interval: 10, thresholds: {}, excluded_keywords: [], ai_detection: true, strictness: 2, subscription_status: 'checking' });
   const [newSearch, setNewSearch] = useState({ term: '', maxPrice: '', minPrice: '' });
   const [newExcluded, setNewExcluded] = useState('');
@@ -187,6 +523,9 @@ function Dashboard({ session }) {
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [targetTimestamp, setTargetTimestamp] = useState(null);
   const [scraperAction, setScraperAction] = useState(null); // 'starting' | 'stopping' | null
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [popup, setPopup] = useState(null); // { message, type }
+  const [confirmState, setConfirmState] = useState(null); // { message, resolver, dualAction }
 
 
   // Theme Toggle Effect
@@ -202,6 +541,41 @@ function Dashboard({ session }) {
       .then(res => res.json())
       .then(data => setSettings(data))
       .catch(err => console.error(err));
+  }, [session.access_token]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('checkout') !== 'success') return;
+
+    const sessionId = params.get('session_id');
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+
+    const reloadSettings = () => {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      fetch(`${API_URL}/settings`, { headers: authHeaders })
+        .then(res => res.json())
+        .then(data => setSettings(data))
+        .catch(err => console.error(err));
+    };
+
+    if (sessionId) {
+      fetch(`${API_URL}/complete-checkout`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ session_id: sessionId }),
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.error) console.error('complete-checkout:', data.error);
+          reloadSettings();
+        })
+        .catch(err => {
+          console.error(err);
+          reloadSettings();
+        });
+    } else {
+      reloadSettings();
+    }
   }, [session.access_token]);
 
   // Poll Status & Sync Clock
@@ -270,7 +644,8 @@ function Dashboard({ session }) {
   const saveSettings = () => {
     const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
     fetch(`${API_URL}/settings`, { method: 'POST', headers: authHeaders, body: JSON.stringify(settings) })
-      .then(() => alert("✅ Saved!"));
+      .then(() => notify("Settings saved.", 'success'))
+      .catch(() => notify("Could not save settings.", 'error'));
   };
 
   const addSearchTerm = () => {
@@ -302,16 +677,65 @@ function Dashboard({ session }) {
     setSettings(prev => ({ ...prev, excluded_keywords: prev.excluded_keywords.filter((_, i) => i !== index) }));
   };
 
-  const formatTime = (totalSeconds) => {
-    // 1. Force the number to be a clean, positive integer
-    const validSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+const formatTime = (totalSeconds) => {
+  if (totalSeconds <= 0) return "0:00"; // Instead of scanning...
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
 
-    // 2. Calculate minutes and seconds
-    const m = Math.floor(validSeconds / 60);
-    const s = validSeconds % 60;
+  const notify = (message, type = 'info') => {
+    setPopup({ message, type });
+    setTimeout(() => setPopup(null), 3000);
+  };
 
-    // 3. Format beautifully
-    return `${m}:${s.toString().padStart(2, '0')}`;
+  const confirmAction = (message, opts = {}) => {
+    return new Promise((resolve) => {
+      setConfirmState({
+        message,
+        resolver: resolve,
+        dualAction: Boolean(opts.dualAction),
+      });
+    });
+  };
+
+  const closeConfirm = (value) => {
+    if (!confirmState) return;
+    confirmState.resolver(value);
+    setConfirmState(null);
+  };
+
+  const refreshBilling = () => {
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    fetch(`${API_URL}/settings`, { headers: authHeaders })
+      .then(res => res.json())
+      .then(data => setSettings(data))
+      .catch(err => console.error(err));
+  };
+
+  const startStripeCheckout = async () => {
+    setCheckoutLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/create-checkout-session`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+      });
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+      else notify(data.error || 'Checkout could not start. Is STRIPE_PRICE_ID set on the server?', 'error');
+    } catch {
+      notify('Checkout request failed.', 'error');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  };
+
+  const refreshSession = async () => {
+    try {
+      await supabase.auth.refreshSession();
+    } catch {
+      // no-op; settings fetch still reflects backend truth
+    }
   };
 
   // 1. If we are still asking the database for their status, show a loading screen!
@@ -324,15 +748,38 @@ function Dashboard({ session }) {
   }
 
   // 2. If they are officially inactive, lock the gate!
-  if (settings.subscription_status === 'inactive') {
-    return <PricingGate onLogout={() => supabase.auth.signOut()} isDark={isDark} />;
+  if (settings.subscription_status !== 'active') {
+    return <PricingGate
+      onLogout={() => supabase.auth.signOut()}
+      isDark={isDark}
+      session={session}
+      onStartCheckout={startStripeCheckout}
+      checkoutLoading={checkoutLoading}
+    />;
   }
 
   return (
     <div className="min-h-screen p-4 md:p-8 transition-colors duration-300" style={{ background: isDark ? 'linear-gradient(135deg, #2D3748 0%, #1A202C 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', fontFamily: 'monospace' }}>
 
       {currentView === 'account' ? (
-        <AccountPage onBack={() => setCurrentView('dashboard')} isDark={isDark} />
+        <AccountPage
+          onBack={() => setCurrentView('dashboard')}
+          isDark={isDark}
+          session={session}
+          settings={settings}
+          onRefreshBilling={refreshBilling}
+          notify={notify}
+          confirmAction={confirmAction}
+          refreshSession={refreshSession}
+        />
+      ) : currentView === 'listings' ? (
+        <ListingsPage
+          onBack={() => setCurrentView('dashboard')}
+          isDark={isDark}
+          session={session}
+          notify={notify}
+          confirmAction={confirmAction}
+        />
       ) : (
         <div className="max-w-7xl mx-auto">
 
@@ -364,6 +811,7 @@ function Dashboard({ session }) {
 
               {showDropdown && (
                 <div className="absolute right-0 top-12 w-48 z-50 p-2 space-y-2" style={{ background: isDark ? '#2D3748' : 'white', border: '3px solid #2D3748', boxShadow: '4px 4px 0 rgba(0,0,0,0.5)', imageRendering: 'pixelated' }}>
+                  <button onClick={() => { setCurrentView('listings'); setShowDropdown(false); }} className={`w-full text-left p-2 font-bold hover:bg-gray-200 ${isDark ? 'hover:text-black' : ''}`}>MY LISTINGS</button>
                   <button onClick={() => { setCurrentView('account'); setShowDropdown(false); }} className={`w-full text-left p-2 font-bold hover:bg-gray-200 ${isDark ? 'hover:text-black' : ''}`}>ACCOUNT</button>
                   <button onClick={() => { setIsDark(!isDark); setShowDropdown(false); }} className={`w-full text-left p-2 font-bold hover:bg-gray-200 ${isDark ? 'hover:text-black' : ''}`}>{isDark ? 'LIGHT MODE' : 'DARK MODE'}</button>
                   <button onClick={() => supabase.auth.signOut()} className="w-full text-left p-2 font-bold text-red-500 hover:bg-red-100">LOGOUT</button>
@@ -403,11 +851,17 @@ function Dashboard({ session }) {
               <div className={`font-bold ${status.running && timerSeconds === 0 ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
                 {!status.running ? '--:--' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds))}
               </div>
+              <div className="text-xs mt-3 font-bold" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
+                LAST SCRAPE SPEED: {Math.max(0, Math.round((status.last_scrape_duration_ms || 0) / 100) / 10)}s
+              </div>
             </PixelBox>
 
-            <PixelBox className="p-6 text-center" color="#48BB78" isDark={isDark}>
-              <div className="text-sm font-bold mb-2" style={{ color: isDark ? '#9AE6B4' : '#38A169' }}>ITEMS SCANNED TODAY</div>
-              <div className="text-5xl font-bold" style={{ color: isDark ? '#68D391' : '#48BB78' }}>{status.items_scanned_today || 0}</div>
+            <PixelBox className="p-6 text-center flex flex-col justify-center gap-4" color="#48BB78" isDark={isDark}>
+              <div className="text-sm font-bold" style={{ color: isDark ? '#9AE6B4' : '#38A169' }}>YOUR SCRAPED LISTINGS</div>
+              <div className="text-5xl font-bold" style={{ color: isDark ? '#68D391' : '#48BB78' }}>{status.listings_count ?? 0}</div>
+              <PixelButton color="#2F855A" small className="w-full max-w-xs mx-auto" onClick={() => setCurrentView('listings')}>
+                VIEW ALL LISTINGS
+              </PixelButton>
             </PixelBox>
           </div>
 
@@ -543,6 +997,34 @@ function Dashboard({ session }) {
         .overflow-y-auto::-webkit-scrollbar-track { background: ${isDark ? '#2D3748' : '#E2E8F0'}; }
         .overflow-y-auto::-webkit-scrollbar-thumb { background: #667eea; border: 2px solid ${isDark ? '#1A202C' : '#2D3748'}; }
       `}</style>
+
+      {popup && (
+        <div className="fixed bottom-6 right-6 z-[70] max-w-sm">
+          <PixelBox className="p-4" color={popup.type === 'error' ? '#F56565' : popup.type === 'success' ? '#48BB78' : '#667eea'} isDark={isDark}>
+            <div className="font-bold text-sm">{popup.message}</div>
+          </PixelBox>
+        </div>
+      )}
+
+      {confirmState && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }}>
+          <PixelBox className="p-6 max-w-md w-full" color="#5A67D8" isDark={isDark}>
+            <p className="font-bold whitespace-pre-line mb-5">{confirmState.message}</p>
+            {confirmState.dualAction ? (
+              <div className="flex gap-3 flex-wrap">
+                <PixelButton color="#F56565" onClick={() => closeConfirm('sold')}>MARK SOLD</PixelButton>
+                <PixelButton color="#ED8936" onClick={() => closeConfirm('not_a_deal')}>NOT A DEAL</PixelButton>
+                <PixelButton color="#718096" onClick={() => closeConfirm(null)}>CANCEL</PixelButton>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <PixelButton color="#F56565" onClick={() => closeConfirm(true)}>CONFIRM</PixelButton>
+                <PixelButton color="#718096" onClick={() => closeConfirm(false)}>CANCEL</PixelButton>
+              </div>
+            )}
+          </PixelBox>
+        </div>
+      )}
     </div>
   );
 }
