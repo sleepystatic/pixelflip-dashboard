@@ -359,6 +359,17 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
 // ==========================================
 // PRICING GATE (UNPAID USERS)
 // ==========================================
+const formatListingTime = (iso) => {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  } catch {
+    return null;
+  }
+};
+
 const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
@@ -433,7 +444,7 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
         <div>
           <h1 className="text-3xl font-bold">YOUR SCRAPED LISTINGS</h1>
           <p className="text-sm mt-1" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
-            {total} saved {total === 1 ? 'match' : 'matches'}
+            {total} {total === 1 ? 'match' : 'matches'} · Newest marketplace post first; undated items list last
           </p>
         </div>
         <PixelButton onClick={onBack} color="#718096" small>BACK TO DASHBOARD</PixelButton>
@@ -493,6 +504,11 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
                   <p className="text-sm mt-1 font-bold" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
                     {[row.platform, row.location].filter(Boolean).join(' · ')}
                   </p>
+                  {row.listed_at && formatListingTime(row.listed_at) && (
+                    <p className="text-xs mt-2 font-bold" style={{ color: isDark ? '#718096' : '#4A5568' }}>
+                      Posted: {formatListingTime(row.listed_at)}
+                    </p>
+                  )}
                 </div>
               </div>
             </PixelBox>
@@ -521,12 +537,12 @@ const PricingGate = ({ onLogout, isDark, session, onStartCheckout, checkoutLoadi
       <p className="text-lg mb-8" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>Your account is currently inactive. Upgrade to start sniping deals.</p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 text-left">
-        {/* Free Tier */}
+        {/* Basic Tier */}
         <div className="p-6 border-4 border-gray-500 relative" style={{ background: isDark ? '#2D3748' : '#F7FAFC' }}>
-          <h2 className="text-xl font-bold mb-2">FREE TIER</h2>
-          <p className="text-3xl font-bold mb-4">$0<span className="text-sm" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>/mo</span></p>
+          <h2 className="text-xl font-bold mb-2">BASIC SNIPER</h2>
+          <p className="text-3xl font-bold mb-4">$9.99<span className="text-sm" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>/mo</span></p>
           <ul className="space-y-2 mb-6 text-sm font-bold" style={{ color: isDark ? '#E2E8F0' : '#4A5568' }}>
-            <li>✓ 1 Platform (Craigslist)</li>
+            <li>✓ 1 Platform (Craigslist, OfferUp, or Mercari)</li>
             <li>✓ 3 Search Terms</li>
             <li>✓ 30 Minute Checks</li>
             <li>❌ No AI Filtering</li>
@@ -588,7 +604,7 @@ export default function App() {
 // DASHBOARD COMPONENT
 // ==========================================
 function Dashboard({ session }) {
-  const [status, setStatus] = useState({ running: false, status: 'stopped', listings_count: 0, items_scanned_today: 0, matches_found_today: 0, recent_activity: [] });
+  const [status, setStatus] = useState({ running: false, status: 'stopped', listings_count: 0, items_scanned_today: 0, matches_found_today: 0, recent_activity: [], scraping_in_progress: false });
   const [settings, setSettings] = useState({ platforms: { craigslist: true, offerup: true, mercari: true }, zip_code: '95212', distance: 25, check_interval: 10, thresholds: {}, excluded_keywords: [], ai_detection: true, strictness: 2, subscription_status: 'checking' });
   const [newSearch, setNewSearch] = useState({ term: '', maxPrice: '', minPrice: '' });
   const [newExcluded, setNewExcluded] = useState('');
@@ -671,7 +687,11 @@ function Dashboard({ session }) {
           if (data.error) return;
           setStatus(prev => ({ ...prev, ...data }));
 
-          if (data.running && data.next_check_timestamp) {
+          if (!data.running) {
+            setTargetTimestamp(null);
+          } else if (data.scraping_in_progress) {
+            setTargetTimestamp(null);
+          } else if (data.next_check_timestamp) {
             setTargetTimestamp(data.next_check_timestamp);
           }
         });
@@ -934,10 +954,10 @@ const formatTime = (totalSeconds) => {
 
             <PixelBox className="p-6 text-center flex flex-col justify-center" color="#667eea" isDark={isDark}>
               <div className="text-sm font-bold mb-2" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
-                {status.running && timerSeconds === 0 ? 'SYSTEM STATUS' : 'NEXT CHECK IN'}
+                {status.running && (status.scraping_in_progress || timerSeconds === 0) ? 'SYSTEM STATUS' : 'NEXT CHECK IN'}
               </div>
-              <div className={`font-bold ${status.running && timerSeconds === 0 ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
-                {!status.running ? '--:--' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds))}
+              <div className={`font-bold ${status.running && (status.scraping_in_progress || timerSeconds === 0) ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
+                {!status.running ? '--:--' : (status.scraping_in_progress ? 'SCRAPING...' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds)))}
               </div>
               <div className="text-xs mt-3 font-bold" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
                 LAST SCRAPE SPEED: {Math.max(0, Math.round((status.last_scrape_duration_ms || 0) / 100) / 10)}s
