@@ -357,6 +357,27 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
 };
 
 // ==========================================
+// LIVE CONSOLE — server sends UTC `ts`; we show the viewer's local timezone
+// ==========================================
+const formatConsoleLogTime = (log) => {
+  if (log && log.ts != null && !Number.isNaN(Number(log.ts))) {
+    try {
+      return new Date(Number(log.ts) * 1000).toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+      });
+    } catch {
+      /* fall through */
+    }
+  }
+  return log?.time || '';
+};
+
+// ==========================================
 // PRICING GATE (UNPAID USERS)
 // ==========================================
 const formatListingTime = (iso) => {
@@ -559,7 +580,7 @@ const PricingGate = ({ onLogout, isDark, session, onStartCheckout, checkoutLoadi
             <li>✓ All Platforms (OfferUp, Mercari)</li>
             <li>✓ Unlimited Search Terms</li>
             <li>✓ 5 Minute Checks</li>
-            <li>✓ Advanced AI Image Filtering</li>
+            <li>✓ Optional image filters (Google Vision, server-side rules)</li>
           </ul>
           <PixelButton onClick={onStartCheckout} disabled={checkoutLoading} color="#48BB78" className="w-full">
             {checkoutLoading ? 'REDIRECTING…' : 'UPGRADE NOW'}
@@ -1085,7 +1106,7 @@ const formatTime = (totalSeconds) => {
               <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-black text-green-400 font-mono text-xs border-4 border-gray-600 rounded">
                 {status.recent_activity?.length > 0 ? (
                   status.recent_activity.map((log, i) => (
-                    <div key={i}>[{log.time}] {log.message}</div>
+                    <div key={i}>[{formatConsoleLogTime(log)}] {log.message}</div>
                   ))
                 ) : (
                   <div className="text-gray-500 text-center mt-20">AWAITING SCRAPER PROTOCOL...</div>
