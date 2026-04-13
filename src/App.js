@@ -566,7 +566,7 @@ const PricingGate = ({ onLogout, isDark, session, onStartCheckout, checkoutLoadi
             <li>✓ 1 Platform (Craigslist, OfferUp, or Mercari)</li>
             <li>✓ 3 Search Terms</li>
             <li>✓ 30 Minute Checks</li>
-            <li>❌ No AI Filtering</li>
+            <li>No AI Image Filtering</li>
           </ul>
           <PixelButton disabled color="#A0AEC0" className="w-full">CURRENT PLAN</PixelButton>
         </div>
@@ -577,10 +577,10 @@ const PricingGate = ({ onLogout, isDark, session, onStartCheckout, checkoutLoadi
           <h2 className="text-xl font-bold mb-2" style={{ color: isDark ? '#E2E8F0' : '#434190' }}>PRO SNIPER</h2>
           <p className="text-3xl font-bold mb-4" style={{ color: isDark ? '#F7FAFC' : '#312E81' }}>$7.99<span className="text-sm" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>/mo</span></p>
           <ul className="space-y-2 mb-6 text-sm font-bold" style={{ color: isDark ? '#E2E8F0' : '#3730A3' }}>
-            <li>✓ All Platforms (OfferUp, Mercari)</li>
+            <li>✓ All Platforms (Craigslist, Mercari, and OfferUp)</li>
             <li>✓ Unlimited Search Terms</li>
             <li>✓ 5 Minute Checks</li>
-            <li>✓ Optional image filters (Google Vision, server-side rules)</li>
+            <li>✓ Optional AI Image Filters (Google Vision AI API)</li>
           </ul>
           <PixelButton onClick={onStartCheckout} disabled={checkoutLoading} color="#48BB78" className="w-full">
             {checkoutLoading ? 'REDIRECTING…' : 'UPGRADE NOW'}
