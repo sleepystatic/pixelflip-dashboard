@@ -255,7 +255,7 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
             border: '2px solid #2F855A'
         }}>
             <p className="font-bold text-lg" style={{ color: isDark ? '#F0FFF4' : '#1A202C' }}>
-                PRO SNIPER
+                {(settings?.plan_name || '').trim() || (settings?.plan_tier === 'basic' ? 'Basic Scanner' : settings?.plan_tier === 'pro' ? 'Pro Scanner' : 'Scanner')}
             </p>
             <p className="text-sm" style={{ color: isDark ? '#C6F6D5' : '#2D3748', opacity: 0.9 }}>
                 {settings?.subscription_cancel_at_period_end
@@ -493,7 +493,7 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
                       loading="lazy"
                       decoding="async"
                       className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
+                      referrerPolicy="strict-origin-when-cross-origin"
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
                   ) : (
@@ -551,49 +551,76 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
   );
 };
 
-const PricingGate = ({ onLogout, isDark, session, onStartCheckout, checkoutLoading }) => (
+const PricingGate = ({ onLogout, isDark, onStartCheckout, checkoutLoading, billingConfig }) => {
+  const b = billingConfig || {};
+  const prebeta = Boolean(b.prebeta_active);
+  const basicShow = Number(b.price_basic_prebeta != null ? b.price_basic_prebeta : 4.99);
+  const proShow = Number(b.price_pro_prebeta != null ? b.price_pro_prebeta : 9.99);
+  const basicStd = Number(b.price_basic_standard != null ? b.price_basic_standard : 9.99);
+  const proStd = Number(b.price_pro_standard != null ? b.price_pro_standard : 19.99);
+  const fmt = (n) => (Number.isFinite(n) ? n : 0).toFixed(2);
+  return (
   <div className="min-h-screen p-4 md:p-8 flex items-center justify-center transition-colors duration-300" style={{ background: isDark ? 'linear-gradient(135deg, #2D3748 0%, #1A202C 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', fontFamily: 'monospace' }}>
     <PixelBox className="max-w-4xl w-full p-8 text-center" color="#5A67D8" isDark={isDark}>
-      <h1 className="text-3xl md:text-5xl font-bold mb-4">PIXELFLIP PRO</h1>
-      <p className="text-lg mb-8" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>Your account is currently inactive. Upgrade to start sniping deals.</p>
+      <h1 className="text-3xl md:text-5xl font-bold mb-4">PIXELFLIP SCANNER</h1>
+      <p className="text-lg mb-2" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>Your account is currently inactive. Subscribe to scan marketplaces on your schedule.</p>
+      {prebeta && (
+        <p className="text-sm font-bold mb-8" style={{ color: isDark ? '#F6E05E' : '#744210' }}>Pre-beta pricing — half off until pre-beta ends.</p>
+      )}
+      {!prebeta && <div className="mb-8" />}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 text-left">
-        {/* Basic Tier */}
         <div className="p-6 border-4 border-gray-500 relative" style={{ background: isDark ? '#2D3748' : '#F7FAFC' }}>
-          <h2 className="text-xl font-bold mb-2">BASIC SNIPER</h2>
-          <p className="text-3xl font-bold mb-4">$9.99<span className="text-sm" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>/mo</span></p>
+          <h2 className="text-xl font-bold mb-2">BASIC SCANNER</h2>
+          {prebeta ? (
+            <p className="text-3xl font-bold mb-1" style={{ color: isDark ? '#E2E8F0' : '#2D3748' }}>
+              ${fmt(basicShow)}<span className="text-sm" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>/mo</span>
+            </p>
+          ) : null}
+          <p className={`text-3xl font-bold mb-4 ${prebeta ? 'text-lg line-through opacity-70' : ''}`} style={{ color: isDark ? '#A0AEC0' : '#4A5568' }}>
+            ${fmt(basicStd)}<span className="text-sm">/mo</span>
+          </p>
           <ul className="space-y-2 mb-6 text-sm font-bold" style={{ color: isDark ? '#E2E8F0' : '#4A5568' }}>
-            <li>✓ 1 Platform (Craigslist, OfferUp, or Mercari)</li>
-            <li>✓ 3 Search Terms</li>
-            <li>✓ 30 Minute Checks</li>
-            <li>No AI Image Filtering</li>
+            <li>✓ All platforms (Craigslist, OfferUp, Mercari)</li>
+            <li>✓ Up to 3 search terms</li>
+            <li>✓ Configurable check interval</li>
+            <li>✗ AI image detection (Pro only)</li>
           </ul>
-          <PixelButton disabled color="#A0AEC0" className="w-full">CURRENT PLAN</PixelButton>
+          <PixelButton onClick={() => onStartCheckout('basic')} disabled={checkoutLoading} color="#718096" className="w-full">
+            {checkoutLoading ? 'REDIRECTING…' : 'SUBSCRIBE — BASIC'}
+          </PixelButton>
         </div>
 
-        {/* Pro Tier */}
         <div className="p-6 border-4 border-indigo-500 relative transform md:-translate-y-4 shadow-xl" style={{ background: isDark ? '#2B6CB0' : '#EBF4FF' }}>
           <div className="absolute top-0 right-0 bg-indigo-500 text-white text-xs font-bold px-2 py-1 transform translate-x-2 -translate-y-2 border-2 border-gray-900">RECOMMENDED</div>
-          <h2 className="text-xl font-bold mb-2" style={{ color: isDark ? '#E2E8F0' : '#434190' }}>PRO SNIPER</h2>
-          <p className="text-3xl font-bold mb-4" style={{ color: isDark ? '#F7FAFC' : '#312E81' }}>$7.99<span className="text-sm" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>/mo</span></p>
+          <h2 className="text-xl font-bold mb-2" style={{ color: isDark ? '#E2E8F0' : '#434190' }}>PRO SCANNER</h2>
+          {prebeta ? (
+            <p className="text-3xl font-bold mb-1" style={{ color: isDark ? '#F7FAFC' : '#312E81' }}>
+              ${fmt(proShow)}<span className="text-sm" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>/mo</span>
+            </p>
+          ) : null}
+          <p className={`text-3xl font-bold mb-4 ${prebeta ? 'text-lg line-through opacity-80' : ''}`} style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
+            ${fmt(proStd)}<span className="text-sm">/mo</span>
+          </p>
           <ul className="space-y-2 mb-6 text-sm font-bold" style={{ color: isDark ? '#E2E8F0' : '#3730A3' }}>
-            <li>✓ All Platforms (Craigslist, Mercari, and OfferUp)</li>
-            <li>✓ Unlimited Search Terms</li>
-            <li>✓ 5 Minute Checks</li>
-            <li>✓ Optional AI Image Filters (Google Vision AI API)</li>
+            <li>✓ All platforms</li>
+            <li>✓ Unlimited search terms</li>
+            <li>✓ Configurable check interval</li>
+            <li>✓ Optional AI image filters (Google Vision)</li>
           </ul>
-          <PixelButton onClick={onStartCheckout} disabled={checkoutLoading} color="#48BB78" className="w-full">
-            {checkoutLoading ? 'REDIRECTING…' : 'UPGRADE NOW'}
+          <PixelButton onClick={() => onStartCheckout('pro')} disabled={checkoutLoading} color="#48BB78" className="w-full">
+            {checkoutLoading ? 'REDIRECTING…' : 'SUBSCRIBE — PRO'}
           </PixelButton>
         </div>
       </div>
 
-      <button onClick={onLogout} className="text-sm font-bold hover:underline mt-4" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
+      <button type="button" onClick={onLogout} className="text-sm font-bold hover:underline mt-4" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
         LOG OUT & RETURN
       </button>
     </PixelBox>
   </div>
-);
+  );
+};
 
 // ==========================================
 // MAIN APP WRAPPER
@@ -626,7 +653,22 @@ export default function App() {
 // ==========================================
 function Dashboard({ session }) {
   const [status, setStatus] = useState({ running: false, status: 'stopped', listings_count: 0, items_scanned_today: 0, matches_found_today: 0, recent_activity: [], scraping_in_progress: false });
-  const [settings, setSettings] = useState({ platforms: { craigslist: true, offerup: true, mercari: true }, zip_code: '95212', distance: 25, check_interval: 10, thresholds: {}, excluded_keywords: [], ai_detection: true, strictness: 2, subscription_status: 'checking' });
+  const [settings, setSettings] = useState({
+    platforms: { craigslist: true, offerup: true, mercari: true },
+    zip_code: '95212',
+    distance: 25,
+    check_interval: 10,
+    thresholds: {},
+    excluded_keywords: [],
+    ai_detection: false,
+    strictness: 2,
+    subscription_status: 'checking',
+    plan_tier: 'inactive',
+    plan_name: null,
+    max_search_terms: 999,
+    ai_image_allowed: false,
+  });
+  const [billingConfig, setBillingConfig] = useState(null);
   const [newSearch, setNewSearch] = useState({ term: '', maxPrice: '', minPrice: '' });
   const [newExcluded, setNewExcluded] = useState('');
 
@@ -640,12 +682,23 @@ function Dashboard({ session }) {
   const [popup, setPopup] = useState(null); // { message, type }
   const [confirmState, setConfirmState] = useState(null); // { message, resolver, dualAction }
 
+  const notify = (message, type = 'info') => {
+    setPopup({ message, type });
+    setTimeout(() => setPopup(null), 3000);
+  };
 
   // Theme Toggle Effect
   useEffect(() => {
     localStorage.setItem('theme', isDark ? 'dark' : 'light');
     document.body.style.backgroundColor = isDark ? '#1A202C' : '#E2E8F0';
   }, [isDark]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/billing/config`)
+      .then((res) => res.json())
+      .then(setBillingConfig)
+      .catch(() => setBillingConfig({}));
+  }, []);
 
   // Load Settings
   useEffect(() => {
@@ -694,7 +747,7 @@ function Dashboard({ session }) {
   // Poll Status & Sync Clock
   useEffect(() => {
     const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    const interval = setInterval(() => {
+    const poll = () => {
       fetch(`${API_URL}/status`, { headers: authHeaders })
         .then(async (res) => {
           if (res.status === 401) {
@@ -705,7 +758,7 @@ function Dashboard({ session }) {
           return res.json();
         })
         .then(data => {
-          if (data.error) return;
+          if (!data || data.error) return;
           setStatus(prev => ({ ...prev, ...data }));
 
           if (!data.running) {
@@ -715,8 +768,11 @@ function Dashboard({ session }) {
           } else if (data.next_check_timestamp) {
             setTargetTimestamp(data.next_check_timestamp);
           }
-        });
-    }, 2000);
+        })
+        .catch((err) => console.error('status poll failed (network/CORS/backend):', err));
+    };
+    poll();
+    const interval = setInterval(poll, 2000);
     return () => clearInterval(interval);
   }, [session.access_token]);
 
@@ -773,10 +829,16 @@ function Dashboard({ session }) {
   };
 
   const addSearchTerm = () => {
+    const cap = settings.max_search_terms != null ? Number(settings.max_search_terms) : 999;
+    const n = Object.keys(settings.thresholds || {}).length;
+    if (n >= cap) {
+      notify(`Your plan allows up to ${cap} search term${cap === 1 ? '' : 's'}.`, 'error');
+      return;
+    }
     const term = newSearch.term.trim().toLowerCase();
-    const max = parseInt(newSearch.maxPrice);
-    const min = parseInt(newSearch.minPrice) || 0;
-    if (term && !isNaN(max)) {
+    const max = parseInt(newSearch.maxPrice, 10);
+    const min = parseInt(newSearch.minPrice, 10) || 0;
+    if (term && !Number.isNaN(max)) {
       setSettings(prev => ({ ...prev, thresholds: { ...prev.thresholds, [term]: { max, min } } }));
       setNewSearch({ term: '', maxPrice: '', minPrice: '' });
     }
@@ -808,11 +870,6 @@ const formatTime = (totalSeconds) => {
   return `${m}:${s.toString().padStart(2, '0')}`;
 };
 
-  const notify = (message, type = 'info') => {
-    setPopup({ message, type });
-    setTimeout(() => setPopup(null), 3000);
-  };
-
   const confirmAction = (message, opts = {}) => {
     return new Promise((resolve) => {
       setConfirmState({
@@ -837,12 +894,16 @@ const formatTime = (totalSeconds) => {
       .catch(err => console.error(err));
   };
 
-  const startStripeCheckout = async () => {
+  const startStripeCheckout = async (plan = 'pro') => {
     setCheckoutLoading(true);
     try {
       const res = await fetch(`${API_URL}/create-checkout-session`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}` },
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ plan }),
       });
       if (res.status === 401) {
         notify('Auth expired. Please log in again before checkout.', 'error');
@@ -881,9 +942,9 @@ const formatTime = (totalSeconds) => {
     return <PricingGate
       onLogout={() => supabase.auth.signOut()}
       isDark={isDark}
-      session={session}
       onStartCheckout={startStripeCheckout}
       checkoutLoading={checkoutLoading}
+      billingConfig={billingConfig}
     />;
   }
 
@@ -1034,10 +1095,11 @@ const formatTime = (totalSeconds) => {
                 </select>
               </div>
 
+              {settings.ai_image_allowed && (
               <div className="mb-6">
                 <div className="flex items-center gap-3 mb-3">
                   <PixelCheckbox isDark={isDark} checked={settings.ai_detection} onChange={() => setSettings(prev => ({ ...prev, ai_detection: !prev.ai_detection }))} />
-                  <span className="text-sm font-bold">ENABLE AI DETECTION</span>
+                  <span className="text-sm font-bold">ENABLE AI DETECTION (PRO)</span>
                 </div>
                 {settings.ai_detection && (
                   <div className="mt-4">
@@ -1046,12 +1108,18 @@ const formatTime = (totalSeconds) => {
                   </div>
                 )}
               </div>
+              )}
             </PixelBox>
 
             {/* 2. Search Terms */}
             <PixelBox className="p-6" color="#5A67D8" isDark={isDark}>
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold">SEARCH TERMS</h2>
+                <div>
+                  <h2 className="text-xl font-bold">SEARCH TERMS</h2>
+                  <p className="text-xs font-bold mt-1" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
+                    {Object.keys(settings.thresholds || {}).length} / {settings.max_search_terms != null ? settings.max_search_terms : '—'} used
+                  </p>
+                </div>
                 <PixelButton onClick={saveSettings} color="#48BB78" small>💾 SAVE</PixelButton>
               </div>
 
