@@ -21,13 +21,25 @@ function normalizeApiUrl(raw, fallback) {
     return url;
 }
 
-// 1. Check if we are local or live
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+// 1. Check if we are local or live.
+//    Private LAN addresses count as local: testing on a phone means loading
+//    http://192.168.x.x:3000, and treating that as production sent the phone
+//    to the Render backend instead of this machine — which looks like the app
+//    hanging forever after login.
+const host = window.location.hostname;
+const isPrivateLan =
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+const isLocal = host === 'localhost' || host === '127.0.0.1' || isPrivateLan;
 
 // 2. Define Fallbacks
 const defaultProd = 'https://pixelflip-backend.onrender.com/api';
-// Local dev should default to local Flask API.
-const defaultDev = 'http://localhost:5000/api';
+// On a LAN address the API lives on the SAME host, port 5000 — 'localhost'
+// would resolve to the phone itself.
+const defaultDev = isPrivateLan
+    ? `http://${host}:5000/api`
+    : 'http://localhost:5000/api';
 
 // 3. Final Selection
 const FINAL_URL = isLocal

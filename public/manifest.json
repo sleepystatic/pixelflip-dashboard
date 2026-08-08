@@ -8,18 +8,26 @@
       "type": "image/x-icon"
     },
     {
-      "src": "logo192.png",
+      "src": "favicon-32x32.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "32x32",
+      "purpose": "any"
     },
     {
-      "src": "logo512.png",
+      "src": "apple_touch_icon.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "180x180",
+      "purpose": "any"
+    },
+    {
+      "src": "logo.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#000000",
-  "background_color": "#ffffff"
+  "theme_color": "#764ba2",
+  "background_color": "#1A202C"
 }
