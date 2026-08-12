@@ -1914,6 +1914,14 @@ function Dashboard({ session }) {
               <div className={`font-bold ${status.running && (status.scraping_in_progress || timerSeconds === 0) ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
                 {!status.running ? '--:--' : (status.scraping_in_progress ? 'SCRAPING...' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds)))}
               </div>
+              {/* One timer, one START/STOP. The countdown targets the SOONEST
+                  term, and this line says what that scan covers — so priority
+                  terms need no second timer and no second button. */}
+              {status.running && status.next_check_scope && !status.scraping_in_progress && (
+                <div className="text-xs mt-2 font-bold" style={{ color: '#38A169' }}>
+                  NEXT: {status.next_check_scope.toUpperCase()}
+                </div>
+              )}
               <div className="text-xs mt-3 font-bold" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
                 LAST SCRAPE SPEED: {Math.max(0, Math.round((status.last_scrape_duration_ms || 0) / 100) / 10)}s
               </div>
