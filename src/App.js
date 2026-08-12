@@ -1068,6 +1068,7 @@ function Dashboard({ session }) {
     plan_tier: 'inactive',
     plan_name: null,
     max_search_terms: 999,
+    max_priority_terms: 0,
     ai_image_allowed: false,
     notifications: { email: true, sms: false, push: false },
     contact_phone: '',
@@ -1453,9 +1454,39 @@ function Dashboard({ session }) {
     }
     setSettings(prev => ({
       ...prev,
-      thresholds: { ...prev.thresholds, [term]: { max, min, exclusions: [] } },
+      thresholds: { ...prev.thresholds, [term]: { max, min, exclusions: [], priority: false } },
     }));
     setNewSearch({ term: '', maxPrice: '', minPrice: '' });
+  };
+
+  // Priority terms: the plan's fastest scan interval, limited to a few terms.
+  // The cap is also enforced server-side in app.py — this is only so the user
+  // finds out before saving rather than after. Kept in sync with
+  // PLAN_MAX_PRIORITY_TERMS in app.py and scraper_multi_user.py.
+  const priorityCap = Number(settings.max_priority_terms || 0);
+  const priorityUsed = Object.values(settings.thresholds || {})
+    .filter(p => p && p.priority).length;
+
+  const togglePriority = (term) => {
+    if (priorityCap <= 0) {
+      notify('Priority scanning is a Pro feature — upgrade to scan your top terms every 5 minutes.', 'error');
+      return;
+    }
+    setSettings(prev => {
+      const t = prev.thresholds?.[term] || {};
+      const turningOn = !t.priority;
+      if (turningOn) {
+        const used = Object.values(prev.thresholds || {}).filter(p => p && p.priority).length;
+        if (used >= priorityCap) {
+          notify(`You can prioritise up to ${priorityCap} terms. Turn one off first.`, 'error');
+          return prev;
+        }
+      }
+      return {
+        ...prev,
+        thresholds: { ...prev.thresholds, [term]: { ...t, priority: turningOn } },
+      };
+    });
   };
 
   /** Per-term exclusion keywords (replaces the old global exclusions panel). */
@@ -1910,6 +1941,15 @@ function Dashboard({ session }) {
                   <p className="text-xs font-bold mt-1" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
                     {Object.keys(settings.thresholds || {}).length} / {settings.max_search_terms != null ? settings.max_search_terms : '—'} used
                   </p>
+                  {priorityCap > 0 ? (
+                    <p className="text-xs font-bold mt-1" style={{ color: '#38A169' }}>
+                      ⚡ {priorityUsed} / {priorityCap} priority — scanned every 5 min, the rest every 15
+                    </p>
+                  ) : (
+                    <p className="text-xs font-bold mt-1" style={{ color: isDark ? '#718096' : '#A0AEC0' }}>
+                      🔒 Pro scans your 3 top terms every 5 minutes
+                    </p>
+                  )}
                 </div>
                 <SaveStatus saving={settingsSaving} dirty={settingsDirty} savedAt={settingsSavedAt} isDark={isDark} />
               </div>
@@ -1922,6 +1962,29 @@ function Dashboard({ session }) {
                       <span className="font-bold text-indigo-500 text-sm whitespace-nowrap">
                         {formatPriceRange(prices)}
                       </span>
+                      {/* Priority toggle. Locked tiers still SEE it — it is the
+                          upsell — but clicking explains rather than enabling. */}
+                      <button
+                        onClick={() => togglePriority(term)}
+                        aria-pressed={!!prices.priority}
+                        title={
+                          priorityCap <= 0
+                            ? 'Pro feature: scan your top terms every 5 minutes instead of 15'
+                            : prices.priority
+                              ? 'Priority ON — this term scans every 5 minutes'
+                              : `Priority OFF — this term scans every 15 minutes (${priorityUsed}/${priorityCap} used)`
+                        }
+                        className="px-2 h-8 font-bold shrink-0 text-xs whitespace-nowrap"
+                        style={{
+                          background: prices.priority ? '#38A169' : (isDark ? '#2D3748' : '#EDF2F7'),
+                          color: prices.priority ? '#FFFFFF' : (isDark ? '#718096' : '#A0AEC0'),
+                          border: `2px solid ${prices.priority ? '#2F855A' : (isDark ? '#4A5568' : '#CBD5E0')}`,
+                          opacity: priorityCap <= 0 ? 0.55 : 1,
+                          cursor: priorityCap <= 0 ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {priorityCap <= 0 ? '🔒 5 MIN' : (prices.priority ? '⚡ 5 MIN' : '15 MIN')}
+                      </button>
                       <button onClick={() => removeSearchTerm(term)} className="bg-red-500 text-white w-8 h-8 font-bold shrink-0">✕</button>
                     </div>
 
