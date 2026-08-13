@@ -342,7 +342,7 @@ export async function sendSupportMessage(accessToken, message) {
  * lives in the settings menu, and offering it here meant Flip nagged about the
  * tour every time someone opened him for help.
  */
-export function FlipCompanion({ isDark, status = 'idle', accessToken }) {
+export function FlipCompanion({ isDark, status = 'idle', accessToken, placement = 'fixed' }) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -404,16 +404,26 @@ export function FlipCompanion({ isDark, status = 'idle', accessToken }) {
       : res.error);
   };
 
+  // 'inline' parks Flip inside a panel instead of floating over the page. On
+  // desktop the floating sprite fills dead space beside the layout; on a phone
+  // there is no dead space, so he sat on top of the console and blocked the
+  // thing the user was trying to read.
+  const inline = placement === 'inline';
+
   return (
     <div
       style={{
-        position: 'fixed',
-        zIndex: 60,
-        // clear of the desktop taskbar; clear of the iOS home indicator
-        bottom: `calc(${isMobile ? 16 : 74}px + env(safe-area-inset-bottom, 0px))`,
-        ...(isMobile
-          ? { left: `calc(12px + env(safe-area-inset-left, 0px))` }
-          : { right: 18 }),
+        ...(inline
+          ? { position: 'relative', zIndex: 5, display: 'inline-block' }
+          : {
+              position: 'fixed',
+              zIndex: 60,
+              // clear of the desktop taskbar; clear of the iOS home indicator
+              bottom: `calc(${isMobile ? 16 : 74}px + env(safe-area-inset-bottom, 0px))`,
+              ...(isMobile
+                ? { left: `calc(12px + env(safe-area-inset-left, 0px))` }
+                : { right: 18 }),
+            }),
         fontFamily: "'SF Mono', SFMono-Regular, Consolas, Menlo, monospace",
       }}
     >
@@ -422,6 +432,11 @@ export function FlipCompanion({ isDark, status = 'idle', accessToken }) {
           background: panel, color: text, border: `3px solid ${border}`,
           boxShadow: '4px 4px 0 0 rgba(0,0,0,0.28)', marginBottom: 8,
           width: isMobile ? 264 : 292, imageRendering: 'pixelated',
+          // Inline, the chat would otherwise stretch its container and shove the
+          // timer around, so lift it out of flow and anchor it above him.
+          ...(inline
+            ? { position: 'absolute', bottom: '100%', left: 0, zIndex: 70 }
+            : null),
         }}>
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',

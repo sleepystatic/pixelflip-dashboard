@@ -1078,6 +1078,14 @@ function Dashboard({ session }) {
   const [billingConfig, setBillingConfig] = useState(null);
   const [newSearch, setNewSearch] = useState({ term: '', maxPrice: '', minPrice: '' });
 
+  // Matches Tour.js's breakpoint so Flip is never rendered twice or not at all.
+  const [isMobileView, setIsMobileView] = useState(() => window.innerWidth <= 820);
+  useEffect(() => {
+    const onResize = () => setIsMobileView(window.innerWidth <= 820);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   const [isDark, setIsDark] = useState(() => localStorage.getItem('theme') === 'dark');
   const [pushState, setPushState] = useState({ supported: true, subscribed: false, permission: 'default' });
   const [pushBusy, setPushBusy] = useState(false);
@@ -1911,8 +1919,22 @@ function Dashboard({ session }) {
               <div className="text-sm font-bold mb-2" style={{ color: isDark ? '#A3BFFA' : '#5A67D8' }}>
                 {status.running && (status.scraping_in_progress || timerSeconds === 0) ? 'SYSTEM STATUS' : 'NEXT CHECK IN'}
               </div>
-              <div className={`font-bold ${status.running && (status.scraping_in_progress || timerSeconds === 0) ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
-                {!status.running ? '--:--' : (status.scraping_in_progress ? 'SCRAPING...' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds)))}
+              {/* On mobile Flip lives here, beside the countdown, instead of
+                  floating over the console. Desktop keeps the floating sprite —
+                  there he fills empty space rather than covering content. */}
+              <div className="flex items-center justify-center gap-3">
+                {isMobileView && !activeTour && tourSeen && tourSeen.intro && (
+                  <FlipCompanion
+                    isDark={isDark}
+                    placement="inline"
+                    status={status.scraping_in_progress ? 'searching'
+                            : status.running ? 'sleeping' : 'idle'}
+                    accessToken={session?.access_token}
+                  />
+                )}
+                <div className={`font-bold ${status.running && (status.scraping_in_progress || timerSeconds === 0) ? 'text-3xl animate-pulse mt-2' : 'text-5xl'}`} style={{ color: isDark ? '#7F9CF5' : '#667eea' }}>
+                  {!status.running ? '--:--' : (status.scraping_in_progress ? 'SCRAPING...' : (timerSeconds === 0 ? 'SCANNING...' : formatTime(timerSeconds)))}
+                </div>
               </div>
               {/* One timer, one START/STOP. The countdown targets the SOONEST
                   term, and this line says what that scan covers — so priority
@@ -1996,9 +2018,18 @@ function Dashboard({ session }) {
               <div className="space-y-3 mb-6 max-h-80 overflow-y-auto">
                 {Object.entries(settings.thresholds || {}).map(([term, prices]) => (
                   <div key={term} className="p-3 border-b-2" style={{ borderColor: isDark ? '#4A5568' : '#E2E8F0' }}>
+                    {/* Title on its own row. Sharing a row with the price, the
+                        cadence button and the delete button left it a few pixels
+                        wide in the desktop panel — it rendered as "g…" and the
+                        term became unreadable. Giving it the full width costs
+                        one line and makes the term the obvious subject of the
+                        controls beneath it. */}
+                    <div className="font-bold uppercase break-words mb-2 leading-tight"
+                         style={{ color: isDark ? '#E2E8F0' : '#2D3748' }}>
+                      {term}
+                    </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-bold uppercase flex-1 min-w-0 truncate">{term}</span>
-                      <span className="font-bold text-indigo-500 text-sm whitespace-nowrap">
+                      <span className="font-bold text-indigo-500 text-sm whitespace-nowrap flex-1 min-w-0">
                         {formatPriceRange(prices)}
                       </span>
                       {/* Priority toggle. Locked tiers still SEE it — it is the
@@ -2360,7 +2391,8 @@ function Dashboard({ session }) {
 
           {/* Flip rests on the dashboard once the intro is done. Hidden during
               a tour so there aren't two of him on screen. */}
-          {!activeTour && tourSeen && tourSeen.intro && (
+          {/* Desktop only — on mobile he is rendered inside the countdown box. */}
+          {!isMobileView && !activeTour && tourSeen && tourSeen.intro && (
             <FlipCompanion
               isDark={isDark}
               status={status.scraping_in_progress ? 'searching'
