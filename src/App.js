@@ -1944,23 +1944,54 @@ function Dashboard({ session }) {
               onState={setPanelState}
               bodyClassName="p-6"
             >
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <p className="text-xs font-bold mt-1" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
-                    {Object.keys(settings.thresholds || {}).length} / {settings.max_search_terms != null ? settings.max_search_terms : '—'} used
-                  </p>
-                  {priorityCap > 0 ? (
-                    <p className="text-xs font-bold mt-1" style={{ color: '#38A169' }}>
-                      ⚡ {priorityUsed} / {priorityCap} priority — scanned every 5 min, the rest every 15
-                    </p>
-                  ) : (
-                    <p className="text-xs font-bold mt-1" style={{ color: isDark ? '#718096' : '#A0AEC0' }}>
-                      🔒 Pro scans your 3 top terms every 5 minutes
-                    </p>
-                  )}
+              {/* Two counters as matching chips rather than a sentence of green
+                  text. The priority chip fills as slots are used, so "2 of 3"
+                  reads at a glance and the cadence is explained once underneath
+                  instead of inside the counter. */}
+              <div className="flex justify-between items-start mb-4 gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-bold"
+                    style={{
+                      background: isDark ? '#2D3748' : '#EDF2F7',
+                      color: isDark ? '#A0AEC0' : '#4A5568',
+                      border: `2px solid ${isDark ? '#4A5568' : '#CBD5E0'}`,
+                    }}
+                  >
+                    TERMS
+                    <span style={{ color: isDark ? '#E2E8F0' : '#2D3748' }}>
+                      {Object.keys(settings.thresholds || {}).length}/{settings.max_search_terms != null ? settings.max_search_terms : '—'}
+                    </span>
+                  </span>
+
+                  <span
+                    className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-bold"
+                    title={priorityCap > 0
+                      ? 'Priority terms scan every 5 minutes. Your other terms scan every 15.'
+                      : 'Pro lets you pick 3 terms to scan every 5 minutes instead of 15.'}
+                    style={{
+                      background: priorityCap > 0
+                        ? (priorityUsed ? '#38A169' : (isDark ? '#22543D' : '#C6F6D5'))
+                        : (isDark ? '#2D3748' : '#EDF2F7'),
+                      color: priorityCap > 0
+                        ? (priorityUsed ? '#FFFFFF' : (isDark ? '#9AE6B4' : '#22543D'))
+                        : (isDark ? '#718096' : '#A0AEC0'),
+                      border: `2px solid ${priorityCap > 0 ? '#2F855A' : (isDark ? '#4A5568' : '#CBD5E0')}`,
+                      opacity: priorityCap > 0 ? 1 : 0.75,
+                    }}
+                  >
+                    {priorityCap > 0 ? '⚡ PRIORITY' : '🔒 PRIORITY'}
+                    <span>{priorityCap > 0 ? `${priorityUsed}/${priorityCap}` : 'PRO'}</span>
+                  </span>
                 </div>
                 <SaveStatus saving={settingsSaving} dirty={settingsDirty} savedAt={settingsSavedAt} isDark={isDark} />
               </div>
+
+              <p className="text-xs mb-4" style={{ color: isDark ? '#718096' : '#A0AEC0' }}>
+                {priorityCap > 0
+                  ? 'Tap 15 MIN on a term to make it priority — those scan every 5 minutes.'
+                  : 'Upgrade to Pro to scan your 3 most important terms every 5 minutes.'}
+              </p>
 
               <div className="space-y-3 mb-6 max-h-80 overflow-y-auto">
                 {Object.entries(settings.thresholds || {}).map(([term, prices]) => (
