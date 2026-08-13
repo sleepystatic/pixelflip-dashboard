@@ -9,6 +9,17 @@ import { Panel, Taskbar, StatStrip, PageHeader, usePanelLayout } from './Panel';
 import { enablePush, disablePush, getPushState, sendTestPush, isIosNeedsInstall } from './pushNotifications';
 import Tour, { FlipCompanion, INTRO_STEPS, FIRST_SCAN_STEPS, fetchTourProgress, markTourSeen } from './Tour';
 import { EyeIcon } from './icons';
+// Per-term scan cadence (migration 012). Pure, so they live in their own module
+// and are covered by termIntervals.test.js.
+import {
+  DEFAULT_TERM_INTERVAL,
+  FASTEST_TIER_INTERVAL,
+  TERM_INTERVAL,
+  IS_FAST_TERM,
+  TERM_INTERVAL_CHOICES,
+  INTERVAL_LABEL,
+  FAST_TERMS_BESIDES,
+} from './termIntervals';
 
 const SCANNER_PLATFORM_ORDER = ['craigslist', 'offerup', 'mercari', 'facebook'];
 
@@ -109,16 +120,6 @@ const DEFAULT_PANEL_LAYOUT = {
   settings: 'open', terms: 'open', alerts: 'open', console: 'open',
 };
 
-// Scan cadence is a plan feature and applies to every platform equally —
-// Facebook is no longer throttled separately. Must match the tables in
-// app.py / scraper_multi_user.py; the server re-clamps on save regardless.
-const PLAN_INTERVAL_OPTIONS = {
-  pro: [5, 10, 15, 30, 60],
-  basic: [10, 15, 30, 60],
-};
-const INTERVAL_OPTIONS_FOR_TIER = (tier) =>
-  PLAN_INTERVAL_OPTIONS[(tier || '').toLowerCase()] || PLAN_INTERVAL_OPTIONS.basic;
-const INTERVAL_FLOOR_FOR_TIER = (tier) => INTERVAL_OPTIONS_FOR_TIER(tier)[0];
 
 const LISTINGS_PAGE_LIMIT = 24;
 
@@ -1462,37 +1463,46 @@ function Dashboard({ session }) {
     }
     setSettings(prev => ({
       ...prev,
-      thresholds: { ...prev.thresholds, [term]: { max, min, exclusions: [], priority: false } },
+      thresholds: {
+        ...prev.thresholds,
+        // No `priority` flag: the server derives it from the interval, and
+        // sending both would be two sources of truth waiting to disagree.
+        [term]: { max, min, exclusions: [], interval: DEFAULT_TERM_INTERVAL },
+      },
     }));
     setNewSearch({ term: '', maxPrice: '', minPrice: '' });
   };
 
-  // Priority terms: the plan's fastest scan interval, limited to a few terms.
-  // The cap is also enforced server-side in app.py — this is only so the user
-  // finds out before saving rather than after. Kept in sync with
-  // PLAN_MAX_PRIORITY_TERMS in app.py and scraper_multi_user.py.
+  // How many terms may sit at the plan's fastest rate. Enforced server-side in
+  // app.py too — this is only so the user finds out before saving rather than
+  // after. Kept in sync with PLAN_MAX_PRIORITY_TERMS in app.py and
+  // scraper_multi_user.py.
   const priorityCap = Number(settings.max_priority_terms || 0);
-  const priorityUsed = Object.values(settings.thresholds || {})
-    .filter(p => p && p.priority).length;
+  const priorityUsed = Object.values(settings.thresholds || {}).filter(IS_FAST_TERM).length;
 
-  const togglePriority = (term) => {
-    if (priorityCap <= 0) {
-      notify('Priority scanning is a Pro feature — upgrade to scan your top terms every 5 minutes.', 'error');
-      return;
-    }
+  const setTermInterval = (term, mins) => {
+    const next = Number(mins);
+    if (!Number.isFinite(next) || next <= 0) return;
     setSettings(prev => {
       const t = prev.thresholds?.[term] || {};
-      const turningOn = !t.priority;
-      if (turningOn) {
-        const used = Object.values(prev.thresholds || {}).filter(p => p && p.priority).length;
-        if (used >= priorityCap) {
-          notify(`You can prioritise up to ${priorityCap} terms. Turn one off first.`, 'error');
+      if (TERM_INTERVAL(t) === next) return prev;
+      // Only the fastest tier is rationed; every slower rate is unlimited.
+      if (next === FASTEST_TIER_INTERVAL) {
+        if (priorityCap <= 0) {
+          notify('Scanning every 5 minutes is a Pro feature.', 'error');
+          return prev;
+        }
+        if (FAST_TERMS_BESIDES(prev.thresholds, term) >= priorityCap) {
+          notify(
+            `You can scan ${priorityCap} terms every 5 minutes. Slow another one down first.`,
+            'error',
+          );
           return prev;
         }
       }
       return {
         ...prev,
-        thresholds: { ...prev.thresholds, [term]: { ...t, priority: turningOn } },
+        thresholds: { ...prev.thresholds, [term]: { ...t, interval: next } },
       };
     });
   };
@@ -1885,7 +1895,13 @@ function Dashboard({ session }) {
               {
                 k: 'PLAN',
                 v: (settings.plan_tier || 'basic').toUpperCase(),
-                sub: `${settings.check_interval || 10} min`,
+                // There is no single account cadence to show any more. The
+                // fastest rate in use is the honest summary — it is what the
+                // plan actually buys.
+                sub: (() => {
+                  const rates = Object.values(settings.thresholds || {}).map(TERM_INTERVAL);
+                  return rates.length ? `fastest ${Math.min(...rates)} min` : 'no terms yet';
+                })(),
                 color: isDark ? '#B794F4' : '#764ba2',
               },
             ]}
@@ -1989,8 +2005,8 @@ function Dashboard({ session }) {
                   <span
                     className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-bold"
                     title={priorityCap > 0
-                      ? 'Priority terms scan every 5 minutes. Your other terms scan every 15.'
-                      : 'Pro lets you pick 3 terms to scan every 5 minutes instead of 15.'}
+                      ? `Up to ${priorityCap} terms can scan every 5 minutes. Every other term runs at whatever rate you set on it.`
+                      : 'Pro lets you scan a few terms every 5 minutes.'}
                     style={{
                       background: priorityCap > 0
                         ? (priorityUsed ? '#38A169' : (isDark ? '#22543D' : '#C6F6D5'))
@@ -2011,8 +2027,8 @@ function Dashboard({ session }) {
 
               <p className="text-xs mb-4" style={{ color: isDark ? '#718096' : '#A0AEC0' }}>
                 {priorityCap > 0
-                  ? 'Tap 15 MIN on a term to make it priority — those scan every 5 minutes.'
-                  : 'Upgrade to Pro to scan your 3 most important terms every 5 minutes.'}
+                  ? `Every term has its own scan rate — up to ${priorityCap} of them can run every 5 minutes.`
+                  : 'Every term has its own scan rate. Upgrade to Pro to run a few of them every 5 minutes.'}
               </p>
 
               <div className="space-y-3 mb-6 max-h-80 overflow-y-auto">
@@ -2032,29 +2048,37 @@ function Dashboard({ session }) {
                       <span className="font-bold text-indigo-500 text-sm whitespace-nowrap flex-1 min-w-0">
                         {formatPriceRange(prices)}
                       </span>
-                      {/* Priority toggle. Locked tiers still SEE it — it is the
-                          upsell — but clicking explains rather than enabling. */}
-                      <button
-                        onClick={() => togglePriority(term)}
-                        aria-pressed={!!prices.priority}
+                      {/* This term's own cadence. Locked tiers still SEE the
+                          5-minute option — it is the upsell — but it renders
+                          disabled, so the menu explains the plan rather than
+                          hiding it. */}
+                      <select
+                        value={TERM_INTERVAL(prices)}
+                        onChange={(e) => setTermInterval(term, e.target.value)}
+                        aria-label={`Scan ${term} every`}
                         title={
-                          priorityCap <= 0
-                            ? 'Pro feature: scan your top terms every 5 minutes instead of 15'
-                            : prices.priority
-                              ? 'Priority ON — this term scans every 5 minutes'
-                              : `Priority OFF — this term scans every 15 minutes (${priorityUsed}/${priorityCap} used)`
+                          IS_FAST_TERM(prices)
+                            ? 'This term scans every 5 minutes'
+                            : priorityCap > 0
+                              ? `Scans every ${TERM_INTERVAL(prices)} minutes (${priorityUsed}/${priorityCap} terms on 5 min)`
+                              : `Scans every ${TERM_INTERVAL(prices)} minutes. Pro unlocks 5.`
                         }
-                        className="px-2 h-8 font-bold shrink-0 text-xs whitespace-nowrap"
+                        className="h-8 px-1 font-bold shrink-0 text-xs cursor-pointer"
                         style={{
-                          background: prices.priority ? '#38A169' : (isDark ? '#2D3748' : '#EDF2F7'),
-                          color: prices.priority ? '#FFFFFF' : (isDark ? '#718096' : '#A0AEC0'),
-                          border: `2px solid ${prices.priority ? '#2F855A' : (isDark ? '#4A5568' : '#CBD5E0')}`,
-                          opacity: priorityCap <= 0 ? 0.55 : 1,
-                          cursor: priorityCap <= 0 ? 'not-allowed' : 'pointer',
+                          background: IS_FAST_TERM(prices) ? '#38A169' : (isDark ? '#2D3748' : '#EDF2F7'),
+                          color: IS_FAST_TERM(prices) ? '#FFFFFF' : (isDark ? '#A0AEC0' : '#4A5568'),
+                          border: `2px solid ${IS_FAST_TERM(prices) ? '#2F855A' : (isDark ? '#4A5568' : '#CBD5E0')}`,
+                          imageRendering: 'pixelated',
                         }}
                       >
-                        {priorityCap <= 0 ? '🔒 5 MIN' : (prices.priority ? '⚡ 5 MIN' : '15 MIN')}
-                      </button>
+                        {TERM_INTERVAL_CHOICES(settings).map(({ mins, allowed }) => (
+                          <option key={mins} value={mins} disabled={!allowed}>
+                            {!allowed ? `🔒 ${INTERVAL_LABEL(mins)} PRO`
+                              : mins === FASTEST_TIER_INTERVAL ? `⚡ ${INTERVAL_LABEL(mins)}`
+                                : INTERVAL_LABEL(mins)}
+                          </option>
+                        ))}
+                      </select>
                       <button onClick={() => removeSearchTerm(term)} className="bg-red-500 text-white w-8 h-8 font-bold shrink-0">✕</button>
                     </div>
 
@@ -2148,14 +2172,12 @@ function Dashboard({ session }) {
                       return;
                     }
                     const next = !enabled;
-                    setSettings((prev) => {
-                      const nextPl = { ...(prev.platforms || {}), [platform]: next };
-                      // Facebook no longer forces a slower interval — every
-                      // platform now runs at the plan's cadence.
-                      const ci = Math.max(prev.check_interval || 10,
-                                          INTERVAL_FLOOR_FOR_TIER(prev.plan_tier));
-                      return { ...prev, platforms: nextPl, check_interval: ci };
-                    });
+                    setSettings((prev) => ({
+                      ...prev,
+                      // Nothing to re-clamp: cadence is per term now, and no
+                      // platform forces a slower one.
+                      platforms: { ...(prev.platforms || {}), [platform]: next },
+                    }));
                   };
                   return (
                     <div
@@ -2214,20 +2236,17 @@ function Dashboard({ session }) {
                 </div>
               </div>
 
+              {/* The "CHECK EVERY" dropdown lived here and set one rate for the
+                  whole account. Cadence is per term now, so it moved onto each
+                  search term's row — a single account-wide rate cannot express
+                  "watch this one closely and that one hourly", and it does not
+                  generalise to per-term credits later. */}
               <div className="mb-6">
-                <div className="text-sm mb-2 font-bold" style={{ color: isDark ? '#A0AEC0' : '#4A5568' }}>CHECK EVERY</div>
-                <select value={settings.check_interval || 10} onChange={(e) => setSettings(prev => ({ ...prev, check_interval: parseInt(e.target.value) }))} className="w-full p-3 text-sm font-bold cursor-pointer" style={{ background: isDark ? '#2D3748' : '#F7FAFC', color: isDark ? 'white' : 'black', border: 'none', boxShadow: `0 0 0 3px ${isDark ? '#4A5568' : '#2D3748'}, inset 3px 3px 0 0 rgba(0,0,0,0.15)`, imageRendering: 'pixelated' }}>
-                  {INTERVAL_OPTIONS_FOR_TIER(settings.plan_tier).map((mins) => (
-                    <option key={mins} value={mins}>
-                      {mins === 60 ? '1 HOUR' : `${mins} MINUTES`}
-                    </option>
-                  ))}
-                </select>
-                {settings.plan_tier !== 'pro' && (
-                  <p className="text-xs font-bold mt-2" style={{ color: isDark ? '#A0AEC0' : '#4A5568' }}>
-                    Upgrade to Pro to scan as often as every 5 minutes.
-                  </p>
-                )}
+                <div className="text-sm mb-2 font-bold" style={{ color: isDark ? '#A0AEC0' : '#4A5568' }}>SCAN RATE</div>
+                <p className="text-xs font-bold" style={{ color: isDark ? '#718096' : '#4A5568' }}>
+                  Set per search term, on the term itself.
+                  {settings.plan_tier !== 'pro' && ' Pro unlocks scanning every 5 minutes.'}
+                </p>
               </div>
 
               {settings.ai_image_allowed && (
