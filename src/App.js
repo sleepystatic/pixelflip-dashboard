@@ -1257,7 +1257,16 @@ function Dashboard({ session }) {
   // Poll Status & Sync Clock
   useEffect(() => {
     const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    // One poll in flight at a time. The interval is 2s but a response can take
+    // longer than that — routinely so on a small instance — and a second poll
+    // launched meanwhile reads the SAME un-advanced cursor, gets the SAME
+    // delta back, and appends it again. That is why every scraper line showed
+    // up two or three times in the console while the scrape itself had run
+    // once.
+    let pollInFlight = false;
     const poll = () => {
+      if (pollInFlight) return;
+      pollInFlight = true;
       // Ask only for console lines newer than what we already hold. The server
       // buffer runs to hundreds of entries and this polls every 2s, so sending
       // the whole thing each time would be pure waste. No cursor yet (first
@@ -1278,11 +1287,20 @@ function Dashboard({ session }) {
         .then(data => {
           if (!data || data.error) return;
 
-          const incoming = data.recent_activity || [];
+          // Belt and braces on top of the in-flight guard: anything at or below
+          // the cursor is by definition already on screen, so a re-delivery
+          // from any other cause cannot duplicate a line. Rows are guaranteed
+          // at least _TS_NUDGE apart server-side (see scrape_logs.get_logs),
+          // which is what makes `ts` a safe identity here.
+          const cursor = logCursorRef.current;
+          const raw = data.recent_activity || [];
+          const incoming = (data.activity_partial && cursor != null)
+            ? raw.filter((l) => Number(l.ts) > cursor)
+            : raw;
           if (incoming.length) {
             logCursorRef.current = incoming.reduce(
               (max, l) => Math.max(max, Number(l.ts) || 0),
-              logCursorRef.current || 0,
+              cursor || 0,
             );
           }
           setStatus(prev => {
@@ -1310,7 +1328,8 @@ function Dashboard({ session }) {
             setTargetTimestamp(null);
           }
         })
-        .catch((err) => console.error('status poll failed (network/CORS/backend):', err));
+        .catch((err) => console.error('status poll failed (network/CORS/backend):', err))
+        .finally(() => { pollInFlight = false; });
     };
     poll();
     const interval = setInterval(poll, 2000);
