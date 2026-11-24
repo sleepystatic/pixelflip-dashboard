@@ -48,9 +48,22 @@ const FINAL_URL = isLocal
 
 console.log(`🌐 API Bridge established at: ${FINAL_URL}`);
 
+// True when this dashboard runs on THIS machine but talks to a REMOTE backend,
+// i.e. REACT_APP_API_URL_DEV points at production (it does by default, so the
+// dashboard doesn't hang without a local backend). Arming, settings and
+// checkout done here then hit real production data — index.js shows a banner.
+const API_HOST = (() => {
+    try { return new URL(FINAL_URL).hostname; } catch (e) { return ''; }
+})();
+const apiIsLocal =
+    API_HOST === 'localhost' || API_HOST === '127.0.0.1' ||
+    /^10\./.test(API_HOST) || /^192\.168\./.test(API_HOST) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(API_HOST);
+const LOCAL_UI_REMOTE_API = isLocal && !apiIsLocal;
+
 const config = {
     API_URL: FINAL_URL
 };
 
 export default config;
-export { FINAL_URL as API_URL };
+export { FINAL_URL as API_URL, API_HOST, LOCAL_UI_REMOTE_API };

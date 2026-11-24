@@ -297,8 +297,8 @@ export default function Tour({ steps, isDark, onFinish }) {
         </div>
 
         <img
-          src="/tourGuide.png"
-          alt="Flip"
+          src="/mascot.svg"
+          alt="Flip, the PixelFlip mascot"
           width={size}
           height={size}
           style={{ width: size, height: size, imageRendering: 'pixelated', marginTop: 6, display: 'block' }}
@@ -562,8 +562,8 @@ export function FlipCompanion({ isDark, status = 'idle', accessToken, placement 
         </div>
       )}
       <img
-        src="/tourGuide.png"
-        alt={open ? 'Close help' : 'Ask Flip for help'}
+        src="/mascot.svg"
+        alt={open ? 'Close help' : 'Open help'}
         width={size}
         height={size}
         onClick={() => setOpen((v) => !v)}

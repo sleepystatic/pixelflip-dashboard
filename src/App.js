@@ -1,9 +1,10 @@
 /* eslint-disable */
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import Auth from './Auth';
 import { API_URL } from './config';
+import { getDeviceId } from './deviceId';
 
 import { Panel, Taskbar, StatStrip, PageHeader, usePanelLayout } from './Panel';
 import { enablePush, disablePush, getPushState, sendTestPush, isIosNeedsInstall } from './pushNotifications';
@@ -233,30 +234,23 @@ const SkeletonPulse = ({ className, isDark }) => (
   />
 );
 
-const SkeletonListing = ({ isDark }) => (
+/**
+ * Matches the shape of a real listing card so the page does not reflow when
+ * results arrive — the skeleton is square-image-on-top like the card itself.
+ */
+const SkeletonCard = ({ isDark }) => (
   <div
-    className="p-4 border-4"
+    className="border-2 overflow-hidden"
     style={{
       background: isDark ? '#2D3748' : '#F7FAFC',
       borderColor: isDark ? '#4A5568' : '#2D3748',
     }}
   >
-    <div className="flex gap-4 flex-col sm:flex-row">
-      {/* Image placeholder */}
-      <SkeletonPulse
-        className="flex-shrink-0 mx-auto sm:mx-0 w-full sm:w-28 h-28"
-        isDark={isDark}
-      />
-      <div className="flex-1 min-w-0 space-y-3">
-        {/* Title line */}
-        <SkeletonPulse className="h-6 w-3/4" isDark={isDark} />
-        {/* Price line */}
-        <SkeletonPulse className="h-5 w-24" isDark={isDark} />
-        {/* Platform/location line */}
-        <SkeletonPulse className="h-4 w-1/2" isDark={isDark} />
-        {/* Time line */}
-        <SkeletonPulse className="h-3 w-32" isDark={isDark} />
-      </div>
+    <SkeletonPulse className="w-full aspect-square" isDark={isDark} />
+    <div className="p-2 space-y-1.5">
+      <SkeletonPulse className="h-4 w-1/3" isDark={isDark} />
+      <SkeletonPulse className="h-3 w-full" isDark={isDark} />
+      <SkeletonPulse className="h-3 w-2/3" isDark={isDark} />
     </div>
   </div>
 );
@@ -289,6 +283,17 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
     }
   })();
 
+  // Set only while a free trial is running (cleared once billing starts).
+  const trialEndLabel = (() => {
+    const ts = settings?.subscription_trial_end;
+    if (!ts || ts * 1000 < Date.now()) return null;
+    try {
+      return new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' });
+    } catch {
+      return null;
+    }
+  })();
+
   const openBillingPortal = async () => {
     setBillingBusy('portal');
     try {
@@ -308,7 +313,9 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
 
   const cancelAtPeriodEnd = async () => {
     const confirmed = await confirmAction(
-      'Cancel your plan at the end of the current billing period? You keep access until then.'
+      trialEndLabel
+        ? `Cancel your free trial? You keep access until it ends on ${trialEndLabel} and won't be charged.`
+        : 'Cancel your plan at the end of the current billing period? You keep access until then.'
     );
     if (!confirmed) return;
     setBillingBusy('cancel');
@@ -464,7 +471,11 @@ const AccountPage = ({ onBack, isDark, session, settings, onRefreshBilling, noti
                 {(settings?.plan_name || '').trim() || (settings?.plan_tier === 'basic' ? 'Basic Scanner' : settings?.plan_tier === 'pro' ? 'Pro Scanner' : 'Scanner')}
             </p>
             <p className="text-sm" style={{ color: isDark ? '#C6F6D5' : '#2D3748', opacity: 0.9 }}>
-                {settings?.subscription_cancel_at_period_end
+                {trialEndLabel
+                  ? (settings?.subscription_cancel_at_period_end
+                    ? `Free trial • ends ${trialEndLabel}. Cancelled, so you won't be charged.`
+                    : `Free trial • ends ${trialEndLabel}. Billing starts then unless you cancel.`)
+                  : settings?.subscription_cancel_at_period_end
                   ? `Ends after current period${renewalLabel ? ` (${renewalLabel})` : ''}.`
                   : renewalLabel
                     ? `Active • Renews on ${renewalLabel}`
@@ -682,6 +693,33 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
 
   const canLoadMore = nextOffset < total;
 
+  // Infinite scroll.
+  //
+  // The observer is created ONCE and calls through a ref rather than closing
+  // over fetchChunk/nextOffset directly. Those change every render, so a
+  // dependency-driven observer would tear down and rebuild on each page — and
+  // an observer that re-observes an already-visible sentinel fires immediately,
+  // which requests the same page repeatedly. The ref is reassigned on every
+  // render, so the callback always sees current state without the observer
+  // itself ever being rebuilt.
+  const loadMoreSentinelRef = useRef(null);
+  const loadMoreFnRef = useRef(null);
+  loadMoreFnRef.current = () => {
+    if (canLoadMore && !loading && !loadingMore) fetchChunk(nextOffset, true);
+  };
+
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const obs = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) loadMoreFnRef.current?.(); },
+      // Start fetching about a screen early so the grid never visibly stalls.
+      { rootMargin: '600px 0px' },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [canLoadMore]);
+
   const applyFilters = () => {
     setSearchQuery(searchDraft.trim());
   };
@@ -838,9 +876,9 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
       )}
 
       {loading ? (
-        <div className="space-y-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
           {Array.from({ length: LISTINGS_PAGE_LIMIT }).map((_, i) => (
-            <SkeletonListing key={i} isDark={isDark} />
+            <SkeletonCard key={i} isDark={isDark} />
           ))}
         </div>
       ) : listings.length === 0 ? (
@@ -848,18 +886,30 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
           <p className="font-bold">No listings saved yet. Start the scanner to capture matches.</p>
         </PixelBox>
       ) : (
-        /* Mobile density: the card stays a row instead of stacking, because a
-           full-width image plus stacked text fit barely two listings on a
-           phone. Every `sm:` value below is the previous desktop value — the
-           desktop card is unchanged; only the sub-640px layout tightens, to
-           roughly six cards per screen. */
-        <div className="space-y-2 sm:space-y-4">
-          {listings.map((row, i) => (
-            <PixelBox key={`${row.link}-${i}`} className="p-2.5 sm:p-4" color="#4A5568" isDark={isDark}>
-              <div className="flex gap-3 sm:gap-4">
-                <div
-                  className="flex-shrink-0 w-20 h-20 sm:w-28 sm:h-28 overflow-hidden border-2 sm:border-4"
-                  style={{ borderColor: isDark ? '#4A5568' : '#2D3748', background: isDark ? '#2D3748' : '#E2E8F0' }}
+        /* Marketplace grid. The old card was a row with an 80px thumbnail,
+           which fits more rows per screen but makes the photo — the thing you
+           actually scan a marketplace with — nearly useless. This is the
+           phone-marketplace shape instead: a square photo, then PRICE first in
+           bold, then the title, then the quiet metadata. Two columns on a
+           phone, widening with the viewport. */
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
+          {listings.map((row, i) => {
+            const fresh = row.created_at && isFreshScrape(row.created_at, nowTick);
+            return (
+              <div
+                key={`${row.link}-${i}`}
+                className="relative flex flex-col border-2 overflow-hidden"
+                style={{
+                  background: isDark ? '#2D3748' : '#FFFFFF',
+                  borderColor: fresh ? '#38A169' : (isDark ? '#4A5568' : '#2D3748'),
+                }}
+              >
+                <a
+                  href={row.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block relative w-full aspect-square overflow-hidden"
+                  style={{ background: isDark ? '#1A202C' : '#E2E8F0' }}
                 >
                   {row.image_url ? (
                     <img
@@ -872,82 +922,128 @@ const ListingsPage = ({ onBack, isDark, session, notify, confirmAction }) => {
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] sm:text-xs font-bold px-1 text-center" style={{ color: isDark ? '#718096' : '#4A5568' }}>NO IMAGE</div>
+                    <div className="w-full h-full flex items-center justify-center text-[10px] font-bold px-1 text-center"
+                         style={{ color: isDark ? '#718096' : '#4A5568' }}>
+                      NO IMAGE
+                    </div>
                   )}
-                </div>
-                <div className="flex-1 min-w-0 text-left">
-                  <div className="flex items-start justify-between gap-2 sm:gap-3">
+                  {/* Which marketplace, over the photo — four sources means the
+                      user has to know where a listing came from before they
+                      click it. */}
+                  <span
+                    className="absolute bottom-1 left-1 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-wide"
+                    style={{ background: 'rgba(0,0,0,0.72)', color: '#FFFFFF' }}
+                  >
+                    {row.platform}
+                  </span>
+                </a>
+
+                <button
+                  onClick={() => markListing(row)}
+                  className="absolute top-1 right-1 w-6 h-6 text-xs leading-none font-bold flex items-center justify-center"
+                  style={{ background: 'rgba(229,62,62,0.92)', color: '#FFFFFF' }}
+                  title="Mark sold / not a deal"
+                  aria-label="Dismiss listing"
+                >
+                  ✕
+                </button>
+
+                <div className="flex flex-col gap-0.5 p-2 text-left min-w-0">
+                  {/* Price leads, the way every marketplace app orders it —
+                      you scan prices first and read titles only for the ones
+                      worth reading. */}
+                  <p className="font-bold text-base sm:text-lg leading-none"
+                     style={{ color: isDark ? '#68D391' : '#276749' }}>
+                    {typeof row.price === 'number' ? `$${row.price}` : row.price}
+                  </p>
+
                   <a
                     href={row.link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-bold text-sm sm:text-lg leading-snug hover:underline break-words block line-clamp-2 sm:line-clamp-none"
-                    style={{ color: isDark ? '#7F9CF5' : '#4338CA' }}
+                    className="text-[11px] sm:text-xs font-bold leading-snug hover:underline line-clamp-2 break-words"
+                    style={{ color: isDark ? '#E2E8F0' : '#2D3748' }}
+                    title={row.title}
                   >
                     {row.title}
                   </a>
-                    <button
-                      onClick={() => markListing(row)}
-                      className="bg-red-500 text-white w-6 h-6 sm:w-8 sm:h-8 text-xs sm:text-base leading-none font-bold flex-shrink-0"
-                      title="Mark sold / not a deal"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  {/* Price and platform/location share a line on mobile and
-                      stack from sm up, which is how the desktop card read. */}
-                  <div className="flex flex-wrap items-baseline gap-x-2 mt-0.5 sm:block sm:mt-2">
-                    <p className="font-bold text-base sm:text-xl" style={{ color: isDark ? '#68D391' : '#38A169' }}>
-                      {typeof row.price === 'number' ? `$${row.price}` : row.price}
+
+                  {row.location && (
+                    <p className="text-[10px] sm:text-xs truncate"
+                       style={{ color: isDark ? '#A0AEC0' : '#718096' }}
+                       title={row.location}>
+                      {row.location}
                     </p>
-                    <p className="text-xs sm:text-sm sm:mt-1 font-bold min-w-0 truncate sm:whitespace-normal" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>
-                      {[row.platform, row.location].filter(Boolean).join(' · ')}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-3 gap-y-0.5 sm:gap-y-1 mt-1 sm:mt-2">
+                  )}
+
+                  {/* Two different clocks, and users conflate them constantly:
+                      when the SELLER posted, and when WE found it. Both are
+                      shown, labelled, and never merged. */}
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5">
                     {row.listed_at && formatListingTime(row.listed_at) && (
-                      <p className="text-[10px] sm:text-xs font-bold" style={{ color: isDark ? '#718096' : '#4A5568' }}>
-                        Posted: {formatListingTime(row.listed_at)}
-                      </p>
+                      <span
+                        className="text-[9px] sm:text-[10px] font-bold"
+                        style={{ color: isDark ? '#718096' : '#4A5568' }}
+                        title={row.listed_at_approx
+                          ? 'Approximate — Mercari does not publish a post date, so this is inferred from when the listing photo was uploaded.'
+                          : 'When the seller posted this listing.'}
+                      >
+                        Posted {row.listed_at_approx ? '~' : ''}{formatListingTime(row.listed_at)}
+                      </span>
                     )}
                     {row.created_at && (
-                      /* When PixelFlip found it. `nowTick` re-renders this every
-                         30s so "2m ago" keeps counting up without a refresh —
-                         it's how a user tells a brand-new hit from an old one. */
-                      <p
-                        className="text-[10px] sm:text-xs font-bold px-1.5 py-0.5"
-                        style={isFreshScrape(row.created_at, nowTick)
+                      <span
+                        className="text-[9px] sm:text-[10px] font-bold px-1 py-0.5"
+                        style={fresh
                           ? { color: isDark ? '#68D391' : '#276749',
                               background: isDark ? '#22543D' : '#C6F6D5' }
                           : { color: isDark ? '#718096' : '#A0AEC0' }}
+                        title="When PixelFlip scraped this listing."
                       >
-                        {isFreshScrape(row.created_at, nowTick) ? '● ' : ''}
-                        Found {timeAgo(row.created_at, nowTick)}
-                      </p>
+                        {fresh ? '● ' : ''}Scraped {timeAgo(row.created_at, nowTick)}
+                      </span>
                     )}
                   </div>
                 </div>
               </div>
-            </PixelBox>
+            );
+          })}
+
+          {/* Placeholders for the page being fetched, so the grid grows
+              smoothly instead of the page jumping when results land. */}
+          {loadingMore && Array.from({ length: 4 }).map((_, i) => (
+            <SkeletonCard key={`more-${i}`} isDark={isDark} />
           ))}
-          {canLoadMore && (
-            <div className="text-center pt-2">
-              <PixelButton
-                color="#667eea"
-                disabled={loadingMore}
-                onClick={() => fetchChunk(nextOffset, true)}
-              >
-                {loadingMore ? 'LOADING…' : 'LOAD MORE'}
-              </PixelButton>
-            </div>
-          )}
         </div>
+      )}
+
+      {/* Infinite scroll. The sentinel sits a screen or so below the fold, so
+          the next page is already arriving by the time the user reaches the
+          bottom. The button stays as a real fallback rather than decoration:
+          IntersectionObserver is unavailable in a few embedded webviews, and
+          without it the list would silently dead-end at 24 items. */}
+      {!loading && canLoadMore && (
+        <>
+          <div ref={loadMoreSentinelRef} aria-hidden="true" className="h-1 w-full" />
+          <div className="text-center pt-3">
+            <PixelButton
+              color="#667eea"
+              disabled={loadingMore}
+              onClick={() => fetchChunk(nextOffset, true)}
+            >
+              {loadingMore ? 'LOADING…' : 'LOAD MORE'}
+            </PixelButton>
+          </div>
+        </>
       )}
     </div>
   );
 };
 
-const PricingGate = ({ onLogout, isDark, onStartCheckout, checkoutLoading, billingConfig }) => {
+const PricingGate = ({
+  onLogout, isDark, onStartCheckout, checkoutLoading, billingConfig,
+  trialAvailable, pendingCheckout, onConfirmCheckout, onCancelCheckout,
+}) => {
   const b = billingConfig || {};
   const prebeta = Boolean(b.prebeta_active);
   const basicShow = Number(b.price_basic_prebeta != null ? b.price_basic_prebeta : 4.99);
@@ -955,11 +1051,30 @@ const PricingGate = ({ onLogout, isDark, onStartCheckout, checkoutLoading, billi
   const basicStd = Number(b.price_basic_standard != null ? b.price_basic_standard : 9.99);
   const proStd = Number(b.price_pro_standard != null ? b.price_pro_standard : 19.99);
   const fmt = (n) => (Number.isFinite(n) ? n : 0).toFixed(2);
+  // Offered only when the server says this account has never had a trial;
+  // the email / network / browser / card checks happen at checkout.
+  const trialDays = Number(b.trial_days) || 0;
+  const offerTrial = Boolean(trialAvailable) && trialDays > 0;
+  const ctaLabel = checkoutLoading ? 'REDIRECTING…' : offerTrial ? `START ${trialDays}-DAY FREE TRIAL` : 'SUBSCRIBE';
   return (
   <div className="min-h-screen overflow-x-hidden p-3 sm:p-4 md:p-8 flex items-center justify-center transition-colors duration-300" style={{ background: isDark ? 'linear-gradient(135deg, #2D3748 0%, #1A202C 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', fontFamily: 'monospace', WebkitTapHighlightColor: 'transparent' }}>
     <PixelBox className="max-w-4xl w-full p-8 text-center" color="#5A67D8" isDark={isDark}>
       <h1 className="text-3xl md:text-5xl font-bold mb-4">PIXELFLIP SCANNER</h1>
       <p className="text-lg mb-2" style={{ color: isDark ? '#A0AEC0' : '#718096' }}>Your account is currently inactive. Subscribe to start scanning marketplaces.</p>
+      {offerTrial && (
+        <p className="text-sm font-bold mb-2" style={{ color: isDark ? '#9AE6B4' : '#22543D' }}>
+          Try either plan free for {trialDays} days. Card required — cancel before the trial ends and you won't be charged. One free trial per person.
+        </p>
+      )}
+      {pendingCheckout && (
+        <div role="alert" className="p-4 my-4 text-left border-4" style={{ borderColor: '#D69E2E', background: isDark ? '#2D3748' : '#FFFFF0', color: isDark ? '#FAF089' : '#744210' }}>
+          <p className="font-bold mb-3">{pendingCheckout.note}</p>
+          <div className="flex flex-wrap gap-3">
+            <PixelButton onClick={onConfirmCheckout} color="#48BB78">CONTINUE TO CHECKOUT</PixelButton>
+            <PixelButton onClick={onCancelCheckout} color="#A0AEC0">NOT NOW</PixelButton>
+          </div>
+        </div>
+      )}
       {prebeta && (
         <p className="text-sm font-bold mb-8" style={{ color: isDark ? '#F6E05E' : '#744210' }}>Pre-beta pricing — half off until pre-beta ends.</p>
       )}
@@ -982,7 +1097,7 @@ const PricingGate = ({ onLogout, isDark, onStartCheckout, checkoutLoading, billi
             <li>✓ Configurable check interval</li>
           </ul>
           <PixelButton onClick={() => onStartCheckout('basic')} disabled={checkoutLoading} color="#48BB78" className="w-full">
-            {checkoutLoading ? 'REDIRECTING…' : 'SUBSCRIBE'}
+            {ctaLabel}
           </PixelButton>
         </div>
 
@@ -998,13 +1113,14 @@ const PricingGate = ({ onLogout, isDark, onStartCheckout, checkoutLoading, billi
             ${fmt(proStd)}<span className="text-sm">/mo</span>
           </p>
           <ul className="space-y-2 mb-6 text-sm font-bold" style={{ color: isDark ? '#E2E8F0' : '#3730A3' }}>
-            <li>✓ All platforms (Craigslist, OfferUp, Mercari, Facebook — 30+ min checks)</li>
+            <li>✓ All four marketplaces, including Facebook</li>
             <li>✓ Up to 10 search terms</li>
+            <li>✓ 3 priority terms scanned every 5 minutes</li>
             <li>✓ Configurable check interval</li>
             <li>✓ Optional AI image filtering</li>
           </ul>
           <PixelButton onClick={() => onStartCheckout('pro')} disabled={checkoutLoading} color="#48BB78" className="w-full">
-            {checkoutLoading ? 'REDIRECTING…' : 'SUBSCRIBE'}
+            {ctaLabel}
           </PixelButton>
         </div>
       </div>
@@ -1062,6 +1178,10 @@ function Dashboard({ session }) {
     zip_code: '95212',
     distance: 25,
     check_interval: 10,
+    // Both default off so the control renders locked until /api/settings says
+    // otherwise — never briefly enabled for a Basic user on first paint.
+    scan_description: false,
+    description_scan_allowed: false,
     thresholds: {},
     ai_detection: false,
     strictness: 2,
@@ -1077,6 +1197,7 @@ function Dashboard({ session }) {
     buyer_include_shipping: true,
   });
   const [billingConfig, setBillingConfig] = useState(null);
+  const [pendingCheckout, setPendingCheckout] = useState(null); // { url, note } when a trial was declined
   const [newSearch, setNewSearch] = useState({ term: '', maxPrice: '', minPrice: '' });
 
   // Matches Tour.js's breakpoint so Flip is never rendered twice or not at all.
@@ -1130,6 +1251,35 @@ function Dashboard({ session }) {
     if (consoleHideMaxTs == null) return arr;
     return arr.filter((l) => Number(l.ts) > consoleHideMaxTs);
   }, [status.recent_activity, consoleHideMaxTs]);
+
+  // Console scrolling. Two behaviours, and the second is the awkward one:
+  //
+  //  * follow new output, so the newest line is always the one on screen
+  //  * but NEVER yank the view away while the user is scrolled up reading
+  //
+  // And the reported annoyance: leaving for the listings view and coming back
+  // remounts this panel, so the browser restores scrollTop to 0 and the console
+  // "teleports" to the oldest line. The layout effect below runs on mount as
+  // well as on new lines, which is what fixes that case specifically.
+  const consoleRef = useRef(null);
+  const consoleFollowRef = useRef(true);   // true = pinned to the tail
+
+  const onConsoleScroll = useCallback((e) => {
+    const el = e.currentTarget;
+    // Slack, so a rounding difference or a smooth-scroll landing a pixel short
+    // does not silently switch following off and leave the console frozen.
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    consoleFollowRef.current = fromBottom <= 32;
+  }, []);
+
+  // useLayoutEffect, not useEffect: this runs after the DOM updates but BEFORE
+  // paint, so the jump to the bottom is never visible as a flicker.
+  useLayoutEffect(() => {
+    const el = consoleRef.current;
+    if (el && consoleFollowRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [visibleRecentActivity, panelLayout.console]);
 
   const clearLiveConsoleOnly = useCallback(() => {
     const arr = status.recent_activity || [];
@@ -1243,6 +1393,13 @@ function Dashboard({ session }) {
         .then(res => res.json())
         .then(data => {
           if (data.error) console.error('complete-checkout:', data.error);
+          else if (data.trial_message) notify(data.trial_message, 'info');
+          else if (data.trial_outcome === 'granted') {
+            const ends = data.trial_end
+              ? new Date(data.trial_end * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' })
+              : null;
+            notify(`Your free trial has started.${ends ? ` You won't be charged before ${ends}.` : ''}`, 'success');
+          }
           reloadSettings();
         })
         .catch(err => {
@@ -1266,6 +1423,10 @@ function Dashboard({ session }) {
     let pollInFlight = false;
     const poll = () => {
       if (pollInFlight) return;
+      // A tab left open in the background used to poll every 2s forever, each
+      // poll costing the backend a DB connection from the pool the scanner
+      // needs. Nobody is looking at a hidden tab; catch up when it comes back.
+      if (typeof document !== 'undefined' && document.hidden) return;
       pollInFlight = true;
       // Ask only for console lines newer than what we already hold. The server
       // buffer runs to hundreds of entries and this polls every 2s, so sending
@@ -1333,7 +1494,12 @@ function Dashboard({ session }) {
     };
     poll();
     const interval = setInterval(poll, 2000);
-    return () => clearInterval(interval);
+    const onVisible = () => { if (!document.hidden) poll(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [session.access_token]);
 
   // Countdown Timer (driven by backend next_check_timestamp)
@@ -1369,7 +1535,14 @@ function Dashboard({ session }) {
         notify('Could not save settings before start. Please try again.', 'error');
         return;
       }
-      await fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
+      const res = await fetch(`${API_URL}/start`, { method: 'POST', headers: authHeaders });
+      if (!res.ok) {
+        // 402 = no paid plan, 409 = every scanner spot is taken. Both carry a
+        // message written for the user; ignoring the response made START just
+        // flicker and do nothing.
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Could not start the scanner. Please try again.', 'error');
+      }
     } finally {
       // Let the next status poll confirm running; keep a short UX lock to prevent spam.
       setTimeout(() => setScraperAction(null), 1200);
@@ -1728,6 +1901,7 @@ function Dashboard({ session }) {
 
   const startStripeCheckout = async (plan = 'pro') => {
     setCheckoutLoading(true);
+    setPendingCheckout(null);
     try {
       const res = await fetch(`${API_URL}/create-checkout-session`, {
         method: 'POST',
@@ -1735,7 +1909,8 @@ function Dashboard({ session }) {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ plan }),
+        // device_id: one of the repeat-free-trial signals (see deviceId.js).
+        body: JSON.stringify({ plan, device_id: getDeviceId() }),
       });
       if (res.status === 401) {
         notify('Auth expired. Please log in again before checkout.', 'error');
@@ -1743,7 +1918,15 @@ function Dashboard({ session }) {
         return;
       }
       const data = await res.json();
-      if (data.url) window.location.href = data.url;
+      if (data.url && settings.trial_available && data.trial_offered === false) {
+        // The card promised a free trial but the server declined it (this
+        // email, network or browser already had one). Say so BEFORE Stripe, so
+        // nobody discovers it on their statement.
+        setPendingCheckout({
+          url: data.url,
+          note: data.trial_note || "A free trial isn't available for this account, so billing starts today.",
+        });
+      } else if (data.url) window.location.href = data.url;
       else notify(data.error || 'Checkout could not start. Check Stripe env vars/server logs.', 'error');
     } catch {
       notify('Checkout request failed.', 'error');
@@ -1764,14 +1947,15 @@ function Dashboard({ session }) {
   if (settings.subscription_status === 'checking') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-6 transition-colors duration-300" style={{ background: isDark ? '#1A202C' : '#667eea' }}>
-        {/* The animated mark carries the "working" signal on its own, so the
-            label can drop to a quiet caption instead of a pulsing headline. */}
+        {/* Static mascot. The mark used to be an 8-frame GIF that carried the
+            "working" signal by itself; with a still sprite the caption below
+            has to do that job, so it stays. */}
         <img
-          src="/logo.gif"
+          src="/mascot.svg"
           alt=""
           width={160}
           height={160}
-          style={{ width: 160, height: 160, imageRendering: 'pixelated' }}
+          style={{ width: 160, height: 160 }}
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
         />
         <div className="text-white text-sm font-bold font-mono tracking-widest opacity-80">
@@ -1789,6 +1973,10 @@ function Dashboard({ session }) {
       onStartCheckout={startStripeCheckout}
       checkoutLoading={checkoutLoading}
       billingConfig={billingConfig}
+      trialAvailable={Boolean(settings.trial_available)}
+      pendingCheckout={pendingCheckout}
+      onConfirmCheckout={() => { if (pendingCheckout) window.location.href = pendingCheckout.url; }}
+      onCancelCheckout={() => setPendingCheckout(null)}
     />;
   }
 
@@ -1822,16 +2010,18 @@ function Dashboard({ session }) {
               its own block and left the middle empty; identity doesn't need
               that much room once the stat strip carries the status. */}
           <PixelBox className="px-4 py-3 mb-4 flex items-center gap-4" color="#5A67D8" isDark={isDark}>
-            {/* Drop a circular logo at frontend/public/logo.png to replace the
-                wordmark. onError falls back to text so a missing file never
+            {/* The mascot, not a round logo: borderRadius is gone because a
+                16x27 sprite in a circular crop loses its head and feet.
+                objectFit keeps the whole character inside the 60px box at its
+                own aspect. onError falls back to text so a missing file never
                 leaves an empty header. */}
             <img
-              src="/logo.png"
+              src="/pixelflip_logo.png"
               alt="PixelFlip"
               width={60}
               height={60}
               className="shrink-0"
-              style={{ borderRadius: '50%', display: 'block' }}
+              style={{ display: 'block', objectFit: 'contain' }}
               onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'block'; }}
             />
             <span
@@ -2282,6 +2472,39 @@ function Dashboard({ session }) {
                 )}
               </div>
               )}
+
+              {/* Description scanning. Locked tiers still SEE it — it is an
+                  upsell — but the checkbox explains rather than enabling, the
+                  same pattern as the per-term 5-minute option. The server
+                  clamps this too, so a forged POST buys nothing. */}
+              <div className="mb-6">
+                <div className={`flex items-center gap-3 mb-2 ${settings.description_scan_allowed ? '' : 'opacity-60'}`}>
+                  <PixelCheckbox
+                    isDark={isDark}
+                    checked={!!settings.scan_description && !!settings.description_scan_allowed}
+                    onChange={() => {
+                      if (!settings.description_scan_allowed) {
+                        notify('Scanning descriptions is a Pro feature.', 'error');
+                        return;
+                      }
+                      setSettings(prev => ({ ...prev, scan_description: !prev.scan_description }));
+                    }}
+                  />
+                  <span className="text-sm font-bold">
+                    {settings.description_scan_allowed ? 'SCAN DESCRIPTION' : '🔒 SCAN DESCRIPTION'}
+                  </span>
+                  {!settings.description_scan_allowed && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5"
+                          style={{ background: isDark ? '#2D3748' : '#EDF2F7',
+                                   color: isDark ? '#A0AEC0' : '#4A5568' }}>PRO</span>
+                  )}
+                </div>
+                <p className="text-xs font-bold" style={{ color: isDark ? '#A0AEC0' : '#4A5568' }}>
+                  {settings.description_scan_allowed
+                    ? 'Match your include and exclude words against the listing description as well as the title. ⚠ Increases scan duration — descriptions are not in search results, so each new listing needs one extra fetch.'
+                    : 'Pro matches your include and exclude words against listing descriptions, not just titles.'}
+                </p>
+              </div>
             </Panel>
 
             {/* 3. Alerts — pulled out of Settings, which was carrying too much */}
@@ -2394,6 +2617,8 @@ function Dashboard({ session }) {
                 Clear hides lines in this browser only (session).
               </p>
               <div
+                ref={consoleRef}
+                onScroll={onConsoleScroll}
                 className="flex-1 min-h-[12rem] max-h-[min(20rem,42vh)] overflow-y-auto overflow-x-hidden p-2 space-y-2 bg-black text-green-400 font-mono text-xs border-4 border-gray-600 rounded"
                 aria-live="polite"
                 role="log"
