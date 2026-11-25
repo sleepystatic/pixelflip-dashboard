@@ -1355,14 +1355,83 @@ function Dashboard({ session }) {
       .catch(() => setBillingConfig({}));
   }, []);
 
-  // Load Settings
+  /**
+   * One GET /settings, judged strictly: success means HTTP 2xx AND a body that
+   * carries subscription_status. Anything else is a failure the caller retries.
+   * Never throws.
+   */
+  const fetchSettingsOnce = useCallback(async () => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 25000);
+    try {
+      const res = await fetch(`${API_URL}/settings`, {
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        signal: ctl.signal,
+      });
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      if (res.ok && data && data.subscription_status) return { ok: true, data };
+      return { ok: false, status: res.status, error: (data && data.error) || `HTTP ${res.status}` };
+    } catch (e) {
+      return { ok: false, status: 0, error: e && e.name === 'AbortError' ? 'timed out' : 'network error' };
+    } finally {
+      clearTimeout(timer);
+    }
+  }, [session.access_token]);
+
+  // Load Settings — retried until it works.
+  //
+  // This used to ask ONCE and wait for a subscription_status that a failed
+  // request never delivers, so any hiccup (the backend restarting, waking from
+  // sleep, a timeout) left the account on VERIFYING CLEARANCE forever. On
+  // 2026-11-25 that locked everyone out while the server restarted under them.
+  // Now: retry with backoff, say so on screen, refresh an expired login once
+  // and sign out cleanly if it is really gone.
+  const [settingsLoad, setSettingsLoad] = useState({ attempt: 0, error: null });
+  const settingsRetryNowRef = useRef(() => {});
   useEffect(() => {
-    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/settings`, { headers: authHeaders })
-      .then(res => res.json())
-      .then(mergeSettingsResponse)
-      .catch(err => console.error(err));
-  }, [session.access_token, mergeSettingsResponse]);
+    let cancelled = false;
+    let timer = null;
+    let attempt = 0;
+    let refreshedOnce = false;
+    const run = async () => {
+      if (cancelled) return;
+      clearTimeout(timer);
+      attempt += 1;
+      setSettingsLoad((prev) => ({ ...prev, attempt }));
+      const r = await fetchSettingsOnce();
+      if (cancelled) return;
+      if (r.ok) {
+        mergeSettingsResponse(r.data);
+        setSettingsLoad({ attempt, error: null });
+        return;
+      }
+      if (r.status === 401) {
+        // An expired access token: refreshing it changes session.access_token,
+        // which re-runs this effect with the new one. A login that cannot be
+        // refreshed is over — back to the sign-in screen, not a dead spinner.
+        if (!refreshedOnce) {
+          refreshedOnce = true;
+          try {
+            const { error } = await supabase.auth.refreshSession();
+            if (error) throw error;
+          } catch {
+            supabase.auth.signOut();
+            return;
+          }
+        } else {
+          supabase.auth.signOut();
+          return;
+        }
+      }
+      if (cancelled) return;
+      setSettingsLoad({ attempt, error: r.error || 'unavailable' });
+      timer = setTimeout(run, Math.min(15000, 1500 * 2 ** Math.min(attempt - 1, 4)));
+    };
+    settingsRetryNowRef.current = run;
+    run();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [fetchSettingsOnce, mergeSettingsResponse]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1378,10 +1447,10 @@ function Dashboard({ session }) {
 
     const reloadSettings = () => {
       window.history.replaceState({}, document.title, window.location.pathname);
-      fetch(`${API_URL}/settings`, { headers: authHeaders })
-        .then(res => res.json())
-        .then(mergeSettingsResponse)
-        .catch(err => console.error(err));
+      fetchSettingsOnce().then((r) => {
+        if (r.ok) mergeSettingsResponse(r.data);
+        else console.error('settings reload after checkout:', r.error);
+      });
     };
 
     if (sessionId) {
@@ -1409,7 +1478,7 @@ function Dashboard({ session }) {
     } else {
       reloadSettings();
     }
-  }, [session.access_token, mergeSettingsResponse]);
+  }, [session.access_token, mergeSettingsResponse, fetchSettingsOnce]);
 
   // Poll Status & Sync Clock
   useEffect(() => {
@@ -1892,11 +1961,13 @@ function Dashboard({ session }) {
   };
 
   const refreshBilling = () => {
-    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
-    fetch(`${API_URL}/settings`, { headers: authHeaders })
-      .then(res => res.json())
-      .then(data => setSettings(data))
-      .catch(err => console.error(err));
+    // Merged, and only on a real answer: this used to REPLACE settings with
+    // whatever came back, so an error body wiped subscription_status and
+    // dropped a paying user onto the pricing page.
+    fetchSettingsOnce().then((r) => {
+      if (r.ok) mergeSettingsResponse(r.data);
+      else console.error('settings refresh:', r.error);
+    });
   };
 
   const startStripeCheckout = async (plan = 'pro') => {
@@ -1961,6 +2032,34 @@ function Dashboard({ session }) {
         <div className="text-white text-sm font-bold font-mono tracking-widest opacity-80">
           VERIFYING CLEARANCE
         </div>
+        {/* Said out loud when the first try failed, so a slow or restarting
+            server reads as "retrying", never as a frozen app. */}
+        {settingsLoad.error && (
+          <div className="flex flex-col items-center gap-3 px-4 text-center" role="status" aria-live="polite">
+            <div className="text-white text-xs font-mono opacity-80 max-w-xs">
+              Can't reach the PixelFlip server yet ({settingsLoad.error}). Retrying automatically
+              {settingsLoad.attempt > 1 ? ` — attempt ${settingsLoad.attempt}` : ''}…
+            </div>
+            {settingsLoad.attempt >= 3 && (
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => settingsRetryNowRef.current()}
+                  className="px-4 py-2 text-xs font-mono font-bold bg-white text-gray-900 border-2 border-gray-900"
+                >
+                  RETRY NOW
+                </button>
+                <button
+                  type="button"
+                  onClick={() => supabase.auth.signOut()}
+                  className="px-4 py-2 text-xs font-mono font-bold text-white border-2 border-white"
+                >
+                  SIGN OUT
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
